@@ -1,0 +1,622 @@
+# Updated : 2025.02.02
+# Version : 3.2.0
+# GitHub  : https://github.com/Sleeper85/esphome-yambms
+
+# YamBMS ( Yet another multi-BMS Merging Solution )
+
+# This YAML is free software: you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation, either version 3
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/gpl.html>.
+
+# +--------------------------------------+
+# | BLE Client Sensors                   |
+# +--------------------------------------+
+# This file configures BLE GATT sensors to read BMS data
+# from a BLE server as an alternative to Modbus communication.
+#
+# PACKED CHARACTERISTIC FORMAT:
+# Each service has ONE characteristic with all data packed together.
+# The client unpacks data from byte arrays into individual sensors.
+#
+# MULTI-BMS SUPPORT:
+# Characteristic UUIDs embed bms_id_hex to allow multiple BMSes per server.
+# A single client BLE connection can access all BMSes on one server.
+# 
+# USAGE:
+#   1. Include board_options_itf_bluetooth.yaml FIRST to set up the BLE client
+#   2. Include this file for each BMS, specifying ble_client_id to match
+#
+# Required substitutions:
+#   bms_id: The BMS ID number (must match server's bms_id)
+#   bms_id_hex: 2-char hex ID for UUIDs (must match server, e.g. '09', '0a')
+#   bms_name: The BMS name
+#   ble_client_id: ID of the BLE client (from board_options_itf_bluetooth.yaml)
+#   yambms_id: The YamBMS ID
+#
+# Requires: packages/board/board_options_itf_bluetooth.yaml to be included first
+
+substitutions:
+  bms_model: "YamBMS"
+  bms_protocol: "BLE"
+  # One service per BMS - all characteristics under a single service
+  # Service UUID: 4fafc2${bms_id_hex}-1fb5-459e-8fcc-c5c9c331914b
+
+packages:
+  sub_device: !include bms_base_sub_device.yaml
+  bms_balancer: !include bms_base_balancer.yaml
+  bms_combine: !include bms_combine.yaml
+
+# +--------------------------------------+
+# | Globals                              |
+# +--------------------------------------+
+
+globals:
+  - id: bms${bms_id}_ble_connected
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  # Timestamp (millis) of last BLE notification received, used by offline watchdog
+  - id: bms${bms_id}_ble_last_update
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+
+# +========================================+
+# | BINARY SENSORS                         |
+# +========================================+
+
+binary_sensor:
+  - platform: template
+    id: bms${bms_id}_online_status
+    device_id: bms_${bms_id}
+    name: "Online status"
+
+  - platform: template
+    id: bms${bms_id}_charging_allowed
+    device_id: bms_${bms_id}
+    name: "Charging allowed"
+
+  - platform: template
+    id: bms${bms_id}_discharging_allowed
+    device_id: bms_${bms_id}
+    name: "Discharging allowed"
+
+  # Note: bms_equalizing with _bms_ prefix - balancer wraps this
+  - platform: template
+    id: bms${bms_id}_bms_equalizing
+    device_id: bms_${bms_id}
+    name: "BMS balancing"
+
+# +========================================+
+# | SENSOR READERS (packed characteristics)|
+# +========================================+
+
+sensor:
+  # +--------------------------------------+
+  # | STATUS PACKET READER                 |
+  # +--------------------------------------+
+  # Packed format (6 bytes):
+  #   [0]: online_status, [1]: charging_allowed
+  #   [2]: discharging_allowed, [3]: equalizing
+  #   [4-5]: errors_bitmask
+  - platform: ble_client
+    ble_client_id: ble_client_${ble_client_id}
+    id: bms${bms_id}_ble_status_reader
+    internal: true
+    type: characteristic
+    service_uuid: "4fafc2${bms_id_hex}-1fb5-459e-8fcc-c5c9c331914b"
+    characteristic_uuid: "beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b201"
+    notify: true
+    lambda: |-
+      if (x.size() >= 6) {
+        // Track last successful data reception for offline watchdog
+        id(bms${bms_id}_ble_last_update) = millis();
+        id(bms${bms_id}_ble_connected) = true;
+        
+        // Unpack and publish binary sensors
+        id(bms${bms_id}_online_status).publish_state(x[0] > 0);
+        id(bms${bms_id}_charging_allowed).publish_state(x[1] > 0);
+        id(bms${bms_id}_discharging_allowed).publish_state(x[2] > 0);
+        id(bms${bms_id}_bms_equalizing).publish_state(x[3] > 0);
+        
+        // Return errors bitmask as sensor value
+        uint16_t errors = x[4] | (x[5] << 8);
+        return static_cast<float>(errors);
+      }
+      return 0.0f;
+    on_value:
+      then:
+        - lambda: |-
+            id(bms${bms_id}_yambms_errors_bitmask).publish_state(x);
+
+  # Errors bitmask sensor
+  - platform: template
+    id: bms${bms_id}_yambms_errors_bitmask
+    device_id: bms_${bms_id}
+    name: "YamBMS Errors Bitmask"
+    icon: "mdi:alert-circle"
+    accuracy_decimals: 0
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 1
+
+  # +--------------------------------------+
+  # | BATTERY PACKET READER                |
+  # +--------------------------------------+
+  # Packed format (40 bytes) - see server for layout
+  - platform: ble_client
+    ble_client_id: ble_client_${ble_client_id}
+    id: bms${bms_id}_ble_battery_reader
+    internal: true
+    type: characteristic
+    service_uuid: "4fafc2${bms_id_hex}-1fb5-459e-8fcc-c5c9c331914b"
+    characteristic_uuid: "beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b205"
+    notify: true
+    lambda: |-
+      if (!id(bms${bms_id}_online_status).state || x.size() < 36) return NAN;
+      
+      auto unpack_u32 = [&x](size_t offset) -> uint32_t {
+        return x[offset] | (x[offset+1] << 8) | (x[offset+2] << 16) | (x[offset+3] << 24);
+      };
+      auto unpack_i32 = [&x](size_t offset) -> int32_t {
+        uint32_t u = x[offset] | (x[offset+1] << 8) | (x[offset+2] << 16) | (x[offset+3] << 24);
+        return static_cast<int32_t>(u);
+      };
+      auto unpack_u16 = [&x](size_t offset) -> uint16_t {
+        return x[offset] | (x[offset+1] << 8);
+      };
+      
+      // Publish all battery sensors
+      float voltage = unpack_u32(0) * 0.001f;
+      float current = unpack_i32(4) * 0.001f;
+      float power = unpack_i32(8) * 0.001f;
+      float soc = unpack_u16(12) * 0.1f;
+      float soh = unpack_u16(14) * 0.1f;
+      float capacity = unpack_u32(16) * 0.001f;
+      float remaining = unpack_u32(20) * 0.001f;
+      float cycles = static_cast<float>(unpack_u32(24));
+      float charging_power = unpack_u32(28) * 0.001f;
+      float discharging_power = unpack_u32(32) * 0.001f;
+      
+      id(bms${bms_id}_total_voltage).publish_state(voltage);
+      id(bms${bms_id}_current).publish_state(current);
+      id(bms${bms_id}_power).publish_state(power);
+      id(bms${bms_id}_battery_soc).publish_state(soc);
+      id(bms${bms_id}_battery_soh).publish_state(soh);
+      id(bms${bms_id}_battery_capacity).publish_state(capacity);
+      id(bms${bms_id}_battery_capacity_remaining).publish_state(remaining);
+      id(bms${bms_id}_charging_cycles).publish_state(cycles);
+      id(bms${bms_id}_charging_power).publish_state(charging_power);
+      id(bms${bms_id}_discharging_power).publish_state(discharging_power);
+      
+      // Return voltage as the sensor value
+      return voltage;
+
+  # Battery sensors
+  - platform: template
+    id: bms${bms_id}_total_voltage
+    device_id: bms_${bms_id}
+    name: "Total Voltage"
+    unit_of_measurement: V
+    device_class: voltage
+    accuracy_decimals: 2
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 0.01
+
+  - platform: template
+    id: bms${bms_id}_current
+    device_id: bms_${bms_id}
+    name: "Current"
+    unit_of_measurement: A
+    device_class: current
+    accuracy_decimals: 2
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 0.01
+
+  - platform: template
+    id: bms${bms_id}_power
+    device_id: bms_${bms_id}
+    name: "Power"
+    unit_of_measurement: W
+    device_class: power
+    accuracy_decimals: 1
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 1
+
+  - platform: template
+    id: bms${bms_id}_battery_soc
+    device_id: bms_${bms_id}
+    name: "Battery SoC"
+    unit_of_measurement: "%"
+    device_class: battery
+    accuracy_decimals: 1
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 0.1
+
+  - platform: template
+    id: bms${bms_id}_battery_soh
+    device_id: bms_${bms_id}
+    name: "Battery SoH"
+    unit_of_measurement: "%"
+    accuracy_decimals: 1
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 0.1
+
+  - platform: template
+    id: bms${bms_id}_battery_capacity
+    device_id: bms_${bms_id}
+    name: "Battery Capacity"
+    unit_of_measurement: Ah
+    accuracy_decimals: 1
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 0.1
+
+  - platform: template
+    id: bms${bms_id}_battery_capacity_remaining
+    device_id: bms_${bms_id}
+    name: "Battery Capacity Remaining"
+    unit_of_measurement: Ah
+    accuracy_decimals: 1
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 0.1
+
+  - platform: template
+    id: bms${bms_id}_charging_cycles
+    device_id: bms_${bms_id}
+    name: "Charging Cycles"
+    icon: "mdi:battery-sync"
+    accuracy_decimals: 0
+    filters:
+      - or:
+        - throttle: 60s
+        - delta: 1
+
+  - platform: template
+    id: bms${bms_id}_charging_power
+    device_id: bms_${bms_id}
+    name: "Charging Power"
+    unit_of_measurement: W
+    device_class: power
+    accuracy_decimals: 1
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 1
+
+  - platform: template
+    id: bms${bms_id}_discharging_power
+    device_id: bms_${bms_id}
+    name: "Discharging Power"
+    unit_of_measurement: W
+    device_class: power
+    accuracy_decimals: 1
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 1
+
+  # +--------------------------------------+
+  # | CELL PACKET READER                   |
+  # +--------------------------------------+
+  # Packed format (8 bytes):
+  #   [0-1]: max_v, [2-3]: max_cell, [4-5]: min_v, [6-7]: min_cell
+  - platform: ble_client
+    ble_client_id: ble_client_${ble_client_id}
+    id: bms${bms_id}_ble_cell_reader
+    internal: true
+    type: characteristic
+    service_uuid: "4fafc2${bms_id_hex}-1fb5-459e-8fcc-c5c9c331914b"
+    characteristic_uuid: "beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b20e"
+    notify: true
+    lambda: |-
+      if (!id(bms${bms_id}_online_status).state || x.size() < 8) return NAN;
+      
+      uint16_t max_v = x[0] | (x[1] << 8);
+      uint16_t max_cell = x[2] | (x[3] << 8);
+      uint16_t min_v = x[4] | (x[5] << 8);
+      uint16_t min_cell = x[6] | (x[7] << 8);
+      
+      id(bms${bms_id}_max_cell_voltage).publish_state(max_v * 0.001f);
+      id(bms${bms_id}_max_voltage_cell).publish_state(static_cast<float>(max_cell));
+      id(bms${bms_id}_min_cell_voltage).publish_state(min_v * 0.001f);
+      id(bms${bms_id}_min_voltage_cell).publish_state(static_cast<float>(min_cell));
+      
+      // Return max voltage as sensor value
+      return max_v * 0.001f;
+
+  # Cell sensors
+  - platform: template
+    id: bms${bms_id}_max_cell_voltage
+    device_id: bms_${bms_id}
+    name: "Max Cell Voltage"
+    unit_of_measurement: V
+    device_class: voltage
+    accuracy_decimals: 3
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 0.001
+
+  - platform: template
+    id: bms${bms_id}_max_voltage_cell
+    device_id: bms_${bms_id}
+    name: "Max Voltage Cell"
+    icon: "mdi:battery-high"
+    accuracy_decimals: 0
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 1
+
+  - platform: template
+    id: bms${bms_id}_min_cell_voltage
+    device_id: bms_${bms_id}
+    name: "Min Cell Voltage"
+    unit_of_measurement: V
+    device_class: voltage
+    accuracy_decimals: 3
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 0.001
+
+  - platform: template
+    id: bms${bms_id}_min_voltage_cell
+    device_id: bms_${bms_id}
+    name: "Min Voltage Cell"
+    icon: "mdi:battery-low"
+    accuracy_decimals: 0
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 1
+
+  # +--------------------------------------+
+  # | TEMPERATURE PACKET READER            |
+  # +--------------------------------------+
+  # Packed format (8 bytes):
+  #   [0-1]: min_t (int16), [2-3]: min_sensor
+  #   [4-5]: max_t (int16), [6-7]: max_sensor
+  - platform: ble_client
+    ble_client_id: ble_client_${ble_client_id}
+    id: bms${bms_id}_ble_temp_reader
+    internal: true
+    type: characteristic
+    service_uuid: "4fafc2${bms_id_hex}-1fb5-459e-8fcc-c5c9c331914b"
+    characteristic_uuid: "beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b212"
+    notify: true
+    lambda: |-
+      if (!id(bms${bms_id}_online_status).state || x.size() < 8) return NAN;
+      
+      int16_t min_t = static_cast<int16_t>(x[0] | (x[1] << 8));
+      uint16_t min_sensor = x[2] | (x[3] << 8);
+      int16_t max_t = static_cast<int16_t>(x[4] | (x[5] << 8));
+      uint16_t max_sensor = x[6] | (x[7] << 8);
+      
+      // Check for NaN indicator (-2730 = absolute zero)
+      float min_temp = (min_t == -2730) ? NAN : (min_t * 0.1f);
+      float max_temp = (max_t == -2730) ? NAN : (max_t * 0.1f);
+      
+      id(bms${bms_id}_min_temperature).publish_state(min_temp);
+      id(bms${bms_id}_min_temperature_sensor).publish_state(static_cast<float>(min_sensor));
+      id(bms${bms_id}_max_temperature).publish_state(max_temp);
+      id(bms${bms_id}_max_temperature_sensor).publish_state(static_cast<float>(max_sensor));
+      
+      // Return max temp as sensor value
+      return max_temp;
+
+  # Temperature sensors
+  - platform: template
+    id: bms${bms_id}_min_temperature
+    device_id: bms_${bms_id}
+    name: "Min temperature"
+    unit_of_measurement: "°C"
+    device_class: temperature
+    accuracy_decimals: 1
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 0.1
+
+  - platform: template
+    id: bms${bms_id}_min_temperature_sensor
+    device_id: bms_${bms_id}
+    name: "Min temperature sensor"
+    icon: "mdi:thermometer-chevron-down"
+    accuracy_decimals: 0
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 1
+
+  - platform: template
+    id: bms${bms_id}_max_temperature
+    device_id: bms_${bms_id}
+    name: "Max temperature"
+    unit_of_measurement: "°C"
+    device_class: temperature
+    accuracy_decimals: 1
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 0.1
+
+  - platform: template
+    id: bms${bms_id}_max_temperature_sensor
+    device_id: bms_${bms_id}
+    name: "Max temperature sensor"
+    icon: "mdi:thermometer-chevron-up"
+    accuracy_decimals: 0
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 1
+
+  # +--------------------------------------+
+  # | LIMITS PACKET READER                 |
+  # +--------------------------------------+
+  # Packed format (10 bytes):
+  #   [0-1]: max_charge, [2-3]: max_discharge
+  #   [4-5]: ovp, [6-7]: uvp, [8-9]: balance_trigger
+  - platform: ble_client
+    ble_client_id: ble_client_${ble_client_id}
+    id: bms${bms_id}_ble_limits_reader
+    internal: true
+    type: characteristic
+    service_uuid: "4fafc2${bms_id_hex}-1fb5-459e-8fcc-c5c9c331914b"
+    characteristic_uuid: "beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b216"
+    notify: true
+    lambda: |-
+      if (!id(bms${bms_id}_online_status).state || x.size() < 10) return NAN;
+      
+      uint16_t max_charge = x[0] | (x[1] << 8);
+      uint16_t max_discharge = x[2] | (x[3] << 8);
+      uint16_t ovp = x[4] | (x[5] << 8);
+      uint16_t uvp = x[6] | (x[7] << 8);
+      uint16_t balance = x[8] | (x[9] << 8);
+      
+      id(bms${bms_id}_max_charge_current).publish_state(max_charge * 0.1f);
+      id(bms${bms_id}_max_discharge_current).publish_state(max_discharge * 0.1f);
+      id(bms${bms_id}_cell_ovp).publish_state(ovp * 0.001f);
+      id(bms${bms_id}_cell_uvp).publish_state(uvp * 0.001f);
+      id(bms${bms_id}_bms_balance_trigger_voltage).publish_state(balance * 0.001f);
+      
+      // Return max charge current as sensor value
+      return max_charge * 0.1f;
+
+  # Limits sensors
+  - platform: template
+    id: bms${bms_id}_max_charge_current
+    device_id: bms_${bms_id}
+    name: "Max Charge Current"
+    unit_of_measurement: A
+    device_class: current
+    accuracy_decimals: 1
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 0.1
+
+  - platform: template
+    id: bms${bms_id}_max_discharge_current
+    device_id: bms_${bms_id}
+    name: "Max Discharge Current"
+    unit_of_measurement: A
+    device_class: current
+    accuracy_decimals: 1
+    filters:
+      - or:
+        - throttle: 10s
+        - delta: 0.1
+
+  - platform: template
+    id: bms${bms_id}_cell_ovp
+    device_id: bms_${bms_id}
+    name: "Cell OVP"
+    unit_of_measurement: V
+    device_class: voltage
+    accuracy_decimals: 3
+    filters:
+      - or:
+        - throttle: 60s
+        - delta: 0.001
+
+  - platform: template
+    id: bms${bms_id}_cell_uvp
+    device_id: bms_${bms_id}
+    name: "Cell UVP"
+    unit_of_measurement: V
+    device_class: voltage
+    accuracy_decimals: 3
+    filters:
+      - or:
+        - throttle: 60s
+        - delta: 0.001
+
+  # Note: _bms_ prefix - balancer wraps this into balance_trigger_voltage
+  - platform: template
+    id: bms${bms_id}_bms_balance_trigger_voltage
+    device_id: bms_${bms_id}
+    name: "BMS Balance Trigger Voltage"
+    unit_of_measurement: V
+    device_class: voltage
+    accuracy_decimals: 3
+    filters:
+      - or:
+        - throttle: 60s
+        - delta: 0.001
+
+# +========================================+
+# | BLE OFFLINE WATCHDOG                   |
+# +========================================+
+# Mirrors modbus_controller on_offline behavior.
+# When BLE notifications stop arriving for 30s, mark BMS offline
+# and zero all sensors so it gets uncombined by bms_combine.yaml.
+
+interval:
+  - interval: 15s
+    then:
+      - lambda: |-
+          uint32_t last = id(bms${bms_id}_ble_last_update);
+          uint32_t now = millis();
+          uint32_t timeout_ms = 30000;  // 30 seconds without data = offline
+
+          // Only trigger if we were previously connected and data has stopped
+          if (id(bms${bms_id}_ble_connected) && last > 0 && (now - last) > timeout_ms) {
+            ESP_LOGW("ble_client", "BMS ${bms_id}: No BLE data for %u ms, marking offline", (now - last));
+            id(bms${bms_id}_ble_connected) = false;
+
+            // Publish offline status (mirrors modbus on_offline)
+            id(bms${bms_id}_online_status).publish_state(false);
+            id(bms${bms_id}_charging_allowed).publish_state(false);
+            id(bms${bms_id}_discharging_allowed).publish_state(false);
+            id(bms${bms_id}_bms_equalizing).publish_state(false);
+            id(bms${bms_id}_total_voltage).publish_state(0);
+            id(bms${bms_id}_current).publish_state(0);
+            id(bms${bms_id}_power).publish_state(0);
+            id(bms${bms_id}_battery_soc).publish_state(0);
+            id(bms${bms_id}_battery_capacity).publish_state(0);
+            id(bms${bms_id}_battery_capacity_remaining).publish_state(0);
+            id(bms${bms_id}_charging_cycles).publish_state(0);
+            id(bms${bms_id}_max_charge_current).publish_state(0);
+            id(bms${bms_id}_max_discharge_current).publish_state(0);
+            id(bms${bms_id}_max_cell_voltage).publish_state(0);
+            id(bms${bms_id}_max_voltage_cell).publish_state(0);
+            id(bms${bms_id}_min_cell_voltage).publish_state(0);
+            id(bms${bms_id}_min_voltage_cell).publish_state(0);
+            id(bms${bms_id}_min_temperature).publish_state(0);
+            id(bms${bms_id}_min_temperature_sensor).publish_state(0);
+            id(bms${bms_id}_max_temperature).publish_state(0);
+            id(bms${bms_id}_max_temperature_sensor).publish_state(0);
+            id(bms${bms_id}_cell_ovp).publish_state(0);
+            id(bms${bms_id}_cell_uvp).publish_state(0);
+            id(bms${bms_id}_bms_balance_trigger_voltage).publish_state(0);
+            id(bms${bms_id}_yambms_errors_bitmask).publish_state(0);
+            id(bms${bms_id}_charging_power).publish_state(0);
+            id(bms${bms_id}_discharging_power).publish_state(0);
+            id(bms${bms_id}_battery_soh).publish_state(0);
+          }

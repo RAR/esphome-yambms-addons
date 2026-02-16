@@ -1,0 +1,68 @@
+# Updated : 2026.02.02
+# Version : 1.0.0
+# GitHub  : https://github.com/Sleeper85/esphome-yambms
+
+# YamBMS ( Yet another multi-BMS Merging Solution )
+
+# This YAML is free software: you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation, either version 3
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/gpl.html>.
+
+# +--------------------------------------+
+# | JK RS485 Sniffer Base for BLE Server |
+# +--------------------------------------+
+# This package sets up the JK RS485 sniffer component that listens
+# to the RS485 bus between the JK display and BMS(es).
+#
+# Include this package ONCE per RS485 bus, then include
+# bms_BLE_JK_RS485_Modbus_sniffer.yaml for each BMS on that bus.
+#
+# Required substitutions:
+#   sniffer_id: ID for the sniffer component (e.g., 'jk_sniffer_1')
+#   sniffer_name: Display name for the sniffer
+#   sniffer_uart_id: UART ID for the RS485 bus
+#   sniffer_protocol: Protocol version (JK02_24S, JK02_32S, JK04)
+
+logger:
+  tx_buffer_size: 1024
+
+# +--------------------------------------+
+# | Component settings                   |
+# +--------------------------------------+
+
+external_components:
+  - source: github://Sleeper85/esphome-components@main
+    refresh: 0s
+    components: [ jk_rs485_sniffer , jk_rs485_bms ]
+
+jk_rs485_sniffer:
+  - id: ${sniffer_id}
+    protocol_version: ${sniffer_protocol}
+    rx_timeout: 500ms
+    uart_id: ${sniffer_uart_id}
+
+# +--------------------------------------+
+# | Component entities                   |
+# +--------------------------------------+
+
+switch:
+  - platform: template
+    device_id: sniffer_${sniffer_uart_id}
+    name: "${sniffer_name} Broadcasting BMS settings to all BMS"
+    icon: "mdi:cast"
+    restore_mode: RESTORE_DEFAULT_OFF
+    optimistic: true
+    entity_category: config
+    turn_on_action:
+      - lambda: id(${sniffer_id}).set_broadcast_changes_to_all_bms(true);
+    turn_off_action:
+      - lambda: id(${sniffer_id}).set_broadcast_changes_to_all_bms(false);

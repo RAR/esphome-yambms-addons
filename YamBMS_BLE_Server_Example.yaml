@@ -1,0 +1,106 @@
+# +--------------------------------------+
+# | YamBMS BLE Server Example            |
+# +--------------------------------------+
+# Node A: Main YamBMS with BLE server
+# Exposes combined YamBMS data via BLE for wireless inverter proxy
+#
+# Add the BLE server package to your existing YamBMS configuration.
+# The BLE server exposes all the combined battery data that an inverter
+# needs (voltage, current, SOC, limits, alarms, etc.)
+
+esphome:
+  name: yambms-server
+  friendly_name: "YamBMS Server"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: INFO
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# +--------------------------------------+
+# | YamBMS Configuration                 |
+# +--------------------------------------+
+substitutions:
+  friendly_name: 'YamBMS Server'
+  hostname: 'yambms-server'
+  yambms_id: 'yambms1'
+  yambms_name: 'YamBMS 1'
+  yambms_update_interval: '1s'
+  yambms_battery_chemistry: '1' # LFP
+  yambms_cell_count: '16'
+  yambms_bulk_v: '57'
+  yambms_float_v: '55.5'
+  yambms_rebulk_v: '53'
+  yambms_eoc_timer: '30'
+  yambms_cutoff_timer: '60'
+  yambms_max_requested_charge_current: '275'
+  yambms_max_requested_discharge_current: '275'
+  bms_update_interval: '5s'
+  bms_combine_interval: '2s'
+  bms_cutoff_timer: '50s'
+
+packages:
+  # Board configuration
+  board:
+    url: https://github.com/Sleeper85/esphome-yambms
+    ref: dev
+    refresh: 0s
+    files:
+      - path: 'packages/board/board_ESP32_Generic.yaml'
+  
+  # YamBMS core
+  yambms:
+    url: https://github.com/Sleeper85/esphome-yambms
+    ref: dev
+    refresh: 0s
+    files:
+      - path: 'packages/yambms/yambms.yaml'
+  
+  # BMS connections (example - adjust for your BMS type)
+  # bms:
+  #   url: https://github.com/Sleeper85/esphome-yambms
+  #   ref: dev
+  #   refresh: 0s
+  #   files:
+  #     - path: 'packages/bms/bms_combine_JK_BLE.yaml'
+  #       vars:
+  #         bms_id: '1'
+  #         bms_name: 'JK-BMS 1'
+  #         bms_ble_mac_address: 'AA:BB:CC:DD:EE:FF'
+  
+  # BLE Server - expose YamBMS data wirelessly
+  ble_server:
+    url: https://github.com/RAR/esphome-yambms
+    ref: ble-inverter-proxy
+    refresh: 0s
+    files:
+      - path: 'packages/yambms/yambms_ble_server.yaml'
+
+# +--------------------------------------+
+# | Notes                                |
+# +--------------------------------------+
+# After flashing, check ESP32 logs for the BLE MAC address.
+# You will need this MAC address for the proxy node (Node B).
+#
+# The BLE server exposes 4 services with 23 characteristics:
+#   Service 1 (0x0001): Battery data (voltage, current, power, SOC, SOH, capacity)
+#   Service 2 (0x0002): Limits (CVL, CCL, DVL, DCL)
+#   Service 3 (0x0003): Cell data (count, min/max/delta voltage, min/max temp)
+#   Service 4 (0x0004): Status (flags, alarm bitmask, warning bitmask, BMS count)
+#
+# Data is pushed via BLE notifications every 2 seconds.

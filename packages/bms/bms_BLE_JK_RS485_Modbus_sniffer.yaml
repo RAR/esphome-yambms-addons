@@ -1,0 +1,47 @@
+# Updated : 2026.02.02
+# Version : 1.0.0
+# GitHub  : https://github.com/Sleeper85/esphome-yambms
+
+# YamBMS ( Yet another multi-BMS Merging Solution )
+
+# This YAML is free software: you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation, either version 3
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/gpl.html>.
+
+# +--------------------------------------+
+# | BLE Server for JK RS485 Sniffer BMS  |
+# +--------------------------------------+
+# This package sniffs JK BMS data from the RS485 bus (between JK display
+# and BMS) and exposes it to remote clients via BLE GATT server.
+#
+# This is a TWO-PART setup:
+# 1. Include the sniffer package ONCE per RS485 bus (shared across BMSes)
+# 2. Include this package ONCE per BMS on that bus
+#
+# Required substitutions for sniffer (include separately):
+#   sniffer_id: ID for the sniffer component
+#   sniffer_uart_id: UART ID for the RS485 bus
+#   sniffer_protocol: Protocol version (JK02_24S, JK02_32S, JK04)
+#
+# Required substitutions for each BMS:
+#   bms_id: The BMS ID number
+#   bms_name: Display name for the BMS
+#   bms_address: RS485 address of the BMS (0x01-0x10)
+#   sniffer_id: Must match the sniffer's ID
+
+substitutions:
+  bms_model: "JK"
+  bms_protocol: "Multi-node BLE"
+
+packages:
+  bms_sensors: !include bms_sensors_JK_RS485_Modbus_bms_full.yaml
+  bms_ble_server: !include bms_ble_server.yaml

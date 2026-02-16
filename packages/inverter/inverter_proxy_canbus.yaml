@@ -1,0 +1,433 @@
+# Updated : 2026.02.05
+# Version : 1.7.0
+# GitHub  : https://github.com/Sleeper85/esphome-yambms
+
+# YamBMS ( Yet another multi-BMS Merging Solution )
+
+# This YAML is free software: you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation, either version 3
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/gpl.html>.
+
+# +--------------------------------------+
+# | Inverter Proxy CAN Output            |
+# +--------------------------------------+
+# Outputs CAN frames to inverter using BLE-sourced battery data.
+# Mirrors the yambms_canbus.yaml CAN frame format from the main
+# YamBMS project so inverters see identical protocol.
+#
+# Supports: PYLON 1.2, PYLON V2, SMA, Victron, LuxPower
+#
+# Variables required:
+# ${proxy_id} - ID of the BLE client proxy (must match inverter_proxy_ble_client.yaml)
+# ${canbus_node_id} - CAN bus node ID (e.g., 'canbus_inverter_1')
+# ${proxy_name} - Display name for this proxy
+
+substitutions:
+  proxy_canbus_link_timer: '5s'
+
+globals:
+  - id: ${proxy_id}_can_send_data
+    type: bool
+    restore_value: no
+    initial_value: "false"
+  - id: ${proxy_id}_can_frame
+    type: int
+    restore_value: no
+    initial_value: "0"
+  - id: ${proxy_id}_can_frame_index
+    type: int
+    restore_value: no
+    initial_value: "-1"
+
+select:
+  - platform: template
+    name: "${proxy_name} Protocol"
+    id: ${proxy_id}_protocol
+    options:
+      - "Disabled"
+      - "PYLON 1.2"
+      - "PYLON V2"
+      - "SMA"
+      - "Victron"
+      - "LuxPower"
+    restore_value: true
+    initial_option: "PYLON V2"
+    optimistic: true
+    entity_category: config
+
+binary_sensor:
+  - platform: template
+    id: ${proxy_id}_can_status
+    name: "${proxy_name} CAN Status"
+    entity_category: diagnostic
+
+script:
+  - id: ${proxy_id}_can_link_timer
+    mode: restart
+    then:
+      - delay: ${proxy_canbus_link_timer}
+      - lambda: |-
+          id(${proxy_id}_can_send_data) = false;
+          id(${proxy_id}_can_status).publish_state(false);
+
+canbus:
+  # Listen for inverter ACK (Deye sends 0x305)
+  - id: !extend ${canbus_node_id}
+    on_frame:
+      - can_id: 0x305
+        then:
+          - lambda: |-
+              id(${proxy_id}_can_link_timer).execute();
+              if (id(${proxy_id}_can_status).state == false) {
+                id(${proxy_id}_can_send_data) = true;
+                id(${proxy_id}_can_status).publish_state(true);
+              }
+
+interval:
+  # Start CAN output when BLE is connected
+  - interval: 30s
+    then:
+      - lambda: |-
+          if (id(${proxy_id}_can_send_data) == false && id(${proxy_id}_ble_connected).state) {
+            id(${proxy_id}_can_send_data) = true;
+            id(${proxy_id}_can_link_timer).execute();
+            ESP_LOGD("proxy_can", "CAN bus starting...");
+          }
+  
+  # +----------------------------------------------+
+  # | CAN frame round-robin (100ms per frame)      |
+  # +----------------------------------------------+
+  - interval: 100ms
+    then:
+      - if:
+          condition:
+            lambda: |-
+              // Only send if BLE connected and CAN enabled
+              if (!id(${proxy_id}_ble_connected).state) return false;
+              if (!id(${proxy_id}_can_send_data)) return false;
+              if (id(${proxy_id}_protocol).active_index() == 0) return false; // Disabled
+              
+              int index = id(${proxy_id}_can_frame_index);
+              
+              // PYLON 1.2 / LuxPower : frames 1-6
+              if ((id(${proxy_id}_protocol).active_index() == 1) || (id(${proxy_id}_protocol).active_index() == 5)) {
+                int can_frame[] = {1, 2, 3, 4, 5, 6};
+                index = (index >= 5) ? 0 : index + 1;
+                id(${proxy_id}_can_frame) = can_frame[index];
+              }
+              // PYLON V2 : frames 1-7
+              else if (id(${proxy_id}_protocol).active_index() == 2) {
+                int can_frame[] = {1, 2, 3, 4, 5, 6, 7};
+                index = (index >= 6) ? 0 : index + 1;
+                id(${proxy_id}_can_frame) = can_frame[index];
+              }
+              // SMA : frames 1-5,7-8
+              else if (id(${proxy_id}_protocol).active_index() == 3) {
+                int can_frame[] = {1, 2, 3, 4, 7, 8};
+                index = (index >= 5) ? 0 : index + 1;
+                id(${proxy_id}_can_frame) = can_frame[index];
+              }
+              // Victron : frames 1-5,7-8
+              else if (id(${proxy_id}_protocol).active_index() == 4) {
+                int can_frame[] = {1, 2, 3, 4, 7, 8};
+                index = (index >= 5) ? 0 : index + 1;
+                id(${proxy_id}_can_frame) = can_frame[index];
+              }
+              
+              id(${proxy_id}_can_frame_index) = index;
+              return true;
+          then:
+            # +----------------------------------------------+
+            # | Frame 1: 0x35E - Manufacturer name           |
+            # +----------------------------------------------+
+            - if:
+                condition:
+                  lambda: return id(${proxy_id}_can_frame) == 1;
+                then:
+                  - canbus.send:
+                      canbus_id: ${canbus_node_id}
+                      can_id: 0x35E
+                      data: !lambda |-
+                        // "PYLON   " for PYLON protocols, "YamBMS" otherwise
+                        if ((id(${proxy_id}_protocol).active_index() == 1) || (id(${proxy_id}_protocol).active_index() == 2)) {
+                          return {0x50, 0x59, 0x4C, 0x4F, 0x4E, 0x20, 0x20, 0x20};
+                        }
+                        return {0x59, 0x61, 0x6D, 0x42, 0x4D, 0x53, 0x00, 0x00};
+            
+            # +----------------------------------------------+
+            # | Frame 2: 0x351 - Charge/Discharge limits     |
+            # +----------------------------------------------+
+            # Byte [00:01] = CVL : Charge Limit Voltage     (0.1 V)
+            # Byte [02:03] = CCL : Charge Limit Current     (0.1 A)
+            # Byte [04:05] = DCL : Discharge Limit Current  (0.1 A)
+            # Byte [06:07] = DVL : Discharge Limit Voltage  (0.1 V)
+            - if:
+                condition:
+                  lambda: return id(${proxy_id}_can_frame) == 2;
+                then:
+                  - canbus.send:
+                      canbus_id: ${canbus_node_id}
+                      can_id: 0x351
+                      data: !lambda |-
+                        uint8_t can_mesg[8];
+                        can_mesg[0] = uint16_t(id(${proxy_id}_charge_voltage).state * 10) & 0xff;
+                        can_mesg[1] = uint16_t(id(${proxy_id}_charge_voltage).state * 10) >> 8 & 0xff;
+                        can_mesg[2] = uint16_t(id(${proxy_id}_charge_current).state * 10) & 0xff;
+                        can_mesg[3] = uint16_t(id(${proxy_id}_charge_current).state * 10) >> 8 & 0xff;
+                        can_mesg[4] = uint16_t(id(${proxy_id}_discharge_current).state * 10) & 0xff;
+                        can_mesg[5] = uint16_t(id(${proxy_id}_discharge_current).state * 10) >> 8 & 0xff;
+                        can_mesg[6] = uint16_t(id(${proxy_id}_discharge_voltage).state * 10) & 0xff;
+                        can_mesg[7] = uint16_t(id(${proxy_id}_discharge_voltage).state * 10) >> 8 & 0xff;
+                        ESP_LOGD("proxy_can", "0x351: CVL=%.1fV CCL=%.1fA DCL=%.1fA DVL=%.1fV",
+                          id(${proxy_id}_charge_voltage).state, id(${proxy_id}_charge_current).state,
+                          id(${proxy_id}_discharge_current).state, id(${proxy_id}_discharge_voltage).state);
+                        return {can_mesg[0], can_mesg[1], can_mesg[2], can_mesg[3], can_mesg[4], can_mesg[5], can_mesg[6], can_mesg[7]};
+            
+            # +----------------------------------------------+
+            # | Frame 3: 0x355 - SOC / SOH                   |
+            # +----------------------------------------------+
+            # Byte [00:01] = SOC                (1 %)
+            # Byte [02:03] = SOH                (1 %)
+            # Byte [04:05] = SOC high res       (0.01 %) (SMA)
+            # Byte [06:07] = Remaining capacity (1 Ah)   (Sofar)
+            - if:
+                condition:
+                  lambda: return id(${proxy_id}_can_frame) == 3;
+                then:
+                  - canbus.send:
+                      canbus_id: ${canbus_node_id}
+                      can_id: 0x355
+                      data: !lambda |-
+                        uint8_t can_mesg[8];
+                        can_mesg[0] = uint16_t(id(${proxy_id}_soc).state) & 0xff;
+                        can_mesg[1] = uint16_t(id(${proxy_id}_soc).state) >> 8 & 0xff;
+                        can_mesg[2] = uint16_t(id(${proxy_id}_soh).state) & 0xff;
+                        can_mesg[3] = uint16_t(id(${proxy_id}_soh).state) >> 8 & 0xff;
+                        can_mesg[4] = uint16_t(id(${proxy_id}_soc).state * 100) & 0xff;
+                        can_mesg[5] = uint16_t(id(${proxy_id}_soc).state * 100) >> 8 & 0xff;
+                        can_mesg[6] = uint16_t(id(${proxy_id}_capacity_remaining).state) & 0xff;
+                        can_mesg[7] = uint16_t(id(${proxy_id}_capacity_remaining).state) >> 8 & 0xff;
+
+                        // LuxPower: bytes 4-7 = max/min cell voltage (mV)
+                        if (id(${proxy_id}_protocol).active_index() == 5) {
+                          int max_cv = id(${proxy_id}_max_cell_voltage).state * 1000.0;
+                          int min_cv = id(${proxy_id}_min_cell_voltage).state * 1000.0;
+                          can_mesg[4] = max_cv & 0xff;
+                          can_mesg[5] = max_cv >> 8 & 0xff;
+                          can_mesg[6] = min_cv & 0xff;
+                          can_mesg[7] = min_cv >> 8 & 0xff;
+                        }
+
+                        ESP_LOGD("proxy_can", "0x355: SOC=%.0f%% SOH=%.0f%%", id(${proxy_id}_soc).state, id(${proxy_id}_soh).state);
+                        return {can_mesg[0], can_mesg[1], can_mesg[2], can_mesg[3], can_mesg[4], can_mesg[5], can_mesg[6], can_mesg[7]};
+            
+            # +----------------------------------------------+
+            # | Frame 4: 0x356 - Voltage / Current / Temp    |
+            # +----------------------------------------------+
+            # Byte [00:01] = Voltage        (0.01 V)
+            # Byte [02:03] = Current        (0.1 A)
+            # Byte [04:05] = Temperature    (0.1 °C)
+            # Byte [06:07] = Cycles         (1 cycle)
+            - if:
+                condition:
+                  lambda: return id(${proxy_id}_can_frame) == 4;
+                then:
+                  - canbus.send:
+                      canbus_id: ${canbus_node_id}
+                      can_id: 0x356
+                      data: !lambda |-
+                        uint8_t can_mesg[8];
+                        can_mesg[0] = uint16_t(id(${proxy_id}_voltage).state * 100) & 0xff;
+                        can_mesg[1] = uint16_t(id(${proxy_id}_voltage).state * 100) >> 8 & 0xff;
+                        can_mesg[2] = int16_t(id(${proxy_id}_current).state * 10) & 0xff;
+                        can_mesg[3] = int16_t(id(${proxy_id}_current).state * 10) >> 8 & 0xff;
+                        // Average temperature
+                        can_mesg[4] = int16_t(((id(${proxy_id}_min_temperature).state + id(${proxy_id}_max_temperature).state) / 2) * 10) & 0xff;
+                        can_mesg[5] = int16_t(((id(${proxy_id}_min_temperature).state + id(${proxy_id}_max_temperature).state) / 2) * 10) >> 8 & 0xff;
+                        can_mesg[6] = uint16_t(id(${proxy_id}_charging_cycles).state) & 0xff;
+                        can_mesg[7] = uint16_t(id(${proxy_id}_charging_cycles).state) >> 8 & 0xff;
+
+                        // LuxPower: bytes 4-7 = max/min temp (0.1 °C)
+                        if (id(${proxy_id}_protocol).active_index() == 5) {
+                          can_mesg[4] = int16_t(id(${proxy_id}_max_temperature).state * 10 + 1) & 0xff;
+                          can_mesg[5] = int16_t(id(${proxy_id}_max_temperature).state * 10 + 1) >> 8 & 0xff;
+                          can_mesg[6] = int16_t(id(${proxy_id}_min_temperature).state * 10) & 0xff;
+                          can_mesg[7] = int16_t(id(${proxy_id}_min_temperature).state * 10) >> 8 & 0xff;
+                        }
+
+                        ESP_LOGD("proxy_can", "0x356: V=%.2fV I=%.1fA", id(${proxy_id}_voltage).state, id(${proxy_id}_current).state);
+                        return {can_mesg[0], can_mesg[1], can_mesg[2], can_mesg[3], can_mesg[4], can_mesg[5], can_mesg[6], can_mesg[7]};
+            
+            # +----------------------------------------------+
+            # | Frame 5: 0x359 - Alarms/Warnings (PYLON)     |
+            # +----------------------------------------------+
+            # Uses errors_bitmask_alarm/warning from BLE server
+            # Byte [00:01] = Alarm bytes
+            # Byte [02:03] = Warning bytes
+            # Byte [04]    = BMS combined count
+            # Byte [05:06] = Battery capacity (LuxPower)
+            - if:
+                condition:
+                  lambda: return id(${proxy_id}_can_frame) == 5;
+                then:
+                  - canbus.send:
+                      canbus_id: ${canbus_node_id}
+                      can_id: 0x359
+                      data: !lambda |-
+                        uint8_t can_mesg[] = {0, 0, 0, 0, 0, 0, 0, 0};
+                        uint16_t errors_alarm = (uint16_t)id(${proxy_id}_errors_bitmask_alarm).state;
+                        uint16_t errors_warning = (uint16_t)id(${proxy_id}_errors_bitmask_warning).state;
+
+                        // Alarm bytes 0-1
+                        if (errors_alarm > 0) {
+                          if (errors_alarm & 0x0002) can_mesg[0] |= 0x02;  // OVP
+                          if (errors_alarm & 0x0004) can_mesg[0] |= 0x04;  // UVP
+                          if (errors_alarm & 0x0008) can_mesg[0] |= 0x08;  // OTP
+                          if (errors_alarm & 0x0020) can_mesg[0] |= 0x08;  // COTP
+                          if (errors_alarm & 0x0010) can_mesg[0] |= 0x10;  // UTP
+                          if (errors_alarm & 0x0040) can_mesg[0] |= 0x10;  // CUTP
+                          if (errors_alarm & 0x0080) can_mesg[0] |= 0x80;  // DOCP
+                          if (errors_alarm & 0x0100) can_mesg[1] |= 0x80;  // COCP
+                          if (errors_alarm & 0x0800) can_mesg[1] |= 0x08;  // BMS Internal
+                          if (errors_alarm & 0x1000) can_mesg[1] |= 0x10;  // UnBalanced Cell
+                        }
+
+                        // Warning bytes 2-3
+                        if (errors_warning > 0) {
+                          if (errors_warning & 0x0002) can_mesg[2] |= 0x02;  // OVP
+                          if (errors_warning & 0x0004) can_mesg[2] |= 0x04;  // UVP
+                          if (errors_warning & 0x0008) can_mesg[2] |= 0x08;  // OTP
+                          if (errors_warning & 0x0020) can_mesg[2] |= 0x08;  // COTP
+                          if (errors_warning & 0x0010) can_mesg[2] |= 0x10;  // UTP
+                          if (errors_warning & 0x0040) can_mesg[2] |= 0x10;  // CUTP
+                          if (errors_warning & 0x0080) can_mesg[2] |= 0x80;  // DOCP
+                          if (errors_warning & 0x0100) can_mesg[3] |= 0x80;  // COCP
+                          if (errors_warning & 0x0800) can_mesg[3] |= 0x08;  // BMS Internal
+                          if (errors_warning & 0x1000) can_mesg[3] |= 0x10;  // UnBalanced Cell
+                        }
+
+                        // Flags
+                        can_mesg[4] = (uint8_t)id(${proxy_id}_bms_combined).state;
+
+                        // LuxPower: bytes 5-6 = battery capacity (1 Ah)
+                        if (id(${proxy_id}_protocol).active_index() == 5) {
+                          can_mesg[5] = uint16_t(id(${proxy_id}_capacity).state) & 0xff;
+                          can_mesg[6] = uint16_t(id(${proxy_id}_capacity).state) >> 8 & 0xff;
+                        }
+
+                        ESP_LOGD("proxy_can", "0x359: alarm=0x%04X warning=0x%04X", errors_alarm, errors_warning);
+                        return {can_mesg[0], can_mesg[1], can_mesg[2], can_mesg[3], can_mesg[4], can_mesg[5], can_mesg[6], can_mesg[7]};
+            
+            # +----------------------------------------------+
+            # | Frame 6: 0x35C - Charge/Discharge flags      |
+            # +----------------------------------------------+
+            # Byte [00] bit 3: Request full charge
+            # Byte [00] bit 4: Request force charge 2
+            # Byte [00] bit 6: Discharge enable
+            # Byte [00] bit 7: Charge enable
+            - if:
+                condition:
+                  lambda: return id(${proxy_id}_can_frame) == 6;
+                then:
+                  - canbus.send:
+                      canbus_id: ${canbus_node_id}
+                      can_id: 0x35C
+                      data: !lambda |-
+                        uint8_t can_mesg[] = {0, 0, 0, 0, 0, 0, 0, 0};
+
+                        // Bit 4: Force charge
+                        if (id(${proxy_id}_force_charge).state) can_mesg[0] |= 0x10;
+                        // Bit 6: Discharge enable
+                        if (id(${proxy_id}_discharge_enabled).state) can_mesg[0] |= 0x40;
+                        // Bit 7: Charge enable
+                        if (id(${proxy_id}_charge_enabled).state) can_mesg[0] |= 0x80;
+
+                        // LuxPower: bytes 2-3 = cycle count
+                        if (id(${proxy_id}_protocol).active_index() == 5) {
+                          can_mesg[2] = uint16_t(id(${proxy_id}_charging_cycles).state) & 0xff;
+                          can_mesg[3] = uint16_t(id(${proxy_id}_charging_cycles).state) >> 8 & 0xff;
+                        }
+
+                        ESP_LOGD("proxy_can", "0x35C: flags=0x%02X", can_mesg[0]);
+                        return {can_mesg[0], can_mesg[1], can_mesg[2], can_mesg[3], can_mesg[4], can_mesg[5], can_mesg[6], can_mesg[7]};
+            
+            # +----------------------------------------------+
+            # | Frame 7: 0x35A - Alarms (SMA/Victron/V2)     |
+            # +----------------------------------------------+
+            # Different bit layout from 0x359
+            - if:
+                condition:
+                  lambda: return id(${proxy_id}_can_frame) == 7;
+                then:
+                  - canbus.send:
+                      canbus_id: ${canbus_node_id}
+                      can_id: 0x35A
+                      data: !lambda |-
+                        uint8_t can_mesg[] = {0, 0, 0, 0, 0, 0, 0, 0};
+                        uint16_t errors_alarm = (uint16_t)id(${proxy_id}_errors_bitmask_alarm).state;
+                        uint16_t errors_warning = (uint16_t)id(${proxy_id}_errors_bitmask_warning).state;
+
+                        // Alarm bytes 0-3
+                        if (errors_alarm > 0) {
+                          if (errors_alarm & 0x0001) can_mesg[0] |= 0x01;  // General
+                          if (errors_alarm & 0x0002) can_mesg[0] |= 0x04;  // Battery high voltage
+                          if (errors_alarm & 0x0004) can_mesg[0] |= 0x10;  // Battery low voltage
+                          if (errors_alarm & 0x0008) can_mesg[0] |= 0x40;  // Battery high temp
+                          if (errors_alarm & 0x0010) can_mesg[1] |= 0x01;  // Battery low temp
+                          if (errors_alarm & 0x0020) can_mesg[1] |= 0x04;  // Charge high temp
+                          if (errors_alarm & 0x0040) can_mesg[1] |= 0x10;  // Charge low temp
+                          if (errors_alarm & 0x0080) can_mesg[1] |= 0x40;  // High discharge current
+                          if (errors_alarm & 0x0100) can_mesg[2] |= 0x01;  // High charge current
+                          if (errors_alarm & 0x0200) can_mesg[2] |= 0x04;  // Contactor
+                          if (errors_alarm & 0x0400) can_mesg[2] |= 0x10;  // Short circuit
+                          if (errors_alarm & 0x0800) can_mesg[2] |= 0x40;  // BMS internal
+                          if (errors_alarm & 0x1000) can_mesg[3] |= 0x01;  // Cell imbalance
+                        }
+
+                        // Warning bytes 4-7
+                        if (errors_warning > 0) {
+                          if (errors_warning & 0x0001) can_mesg[4] |= 0x01;
+                          if (errors_warning & 0x0002) can_mesg[4] |= 0x04;
+                          if (errors_warning & 0x0004) can_mesg[4] |= 0x10;
+                          if (errors_warning & 0x0008) can_mesg[4] |= 0x40;
+                          if (errors_warning & 0x0010) can_mesg[5] |= 0x01;
+                          if (errors_warning & 0x0020) can_mesg[5] |= 0x04;
+                          if (errors_warning & 0x0040) can_mesg[5] |= 0x10;
+                          if (errors_warning & 0x0080) can_mesg[5] |= 0x40;
+                          if (errors_warning & 0x0100) can_mesg[6] |= 0x01;
+                          if (errors_warning & 0x0200) can_mesg[6] |= 0x04;
+                          if (errors_warning & 0x0400) can_mesg[6] |= 0x10;
+                          if (errors_warning & 0x0800) can_mesg[6] |= 0x40;
+                          if (errors_warning & 0x1000) can_mesg[7] |= 0x01;
+                        }
+
+                        ESP_LOGD("proxy_can", "0x35A: alarm=0x%04X warning=0x%04X", errors_alarm, errors_warning);
+                        return {can_mesg[0], can_mesg[1], can_mesg[2], can_mesg[3], can_mesg[4], can_mesg[5], can_mesg[6], can_mesg[7]};
+            
+            # +----------------------------------------------+
+            # | Frame 8: 0x35F - Battery info (SMA/Victron)  |
+            # +----------------------------------------------+
+            - if:
+                condition:
+                  lambda: return id(${proxy_id}_can_frame) == 8;
+                then:
+                  - canbus.send:
+                      canbus_id: ${canbus_node_id}
+                      can_id: 0x35F
+                      data: !lambda |-
+                        uint8_t can_mesg[] = {0, 0, 0, 0, 0, 0, 0, 0};
+                        can_mesg[2] = 0x02;  // Firmware version major
+                        can_mesg[3] = 0x04;  // Firmware version minor
+                        can_mesg[4] = uint16_t(id(${proxy_id}_capacity_remaining).state) & 0xff;
+                        can_mesg[5] = uint16_t(id(${proxy_id}_capacity_remaining).state) >> 8 & 0xff;
+                        ESP_LOGD("proxy_can", "0x35F: capacity_remaining=%.0fAh", id(${proxy_id}_capacity_remaining).state);
+                        return {can_mesg[0], can_mesg[1], can_mesg[2], can_mesg[3], can_mesg[4], can_mesg[5], can_mesg[6], can_mesg[7]};

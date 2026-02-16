@@ -1,0 +1,537 @@
+# Updated : 2026.02.05
+# Version : 1.7.0
+# GitHub  : https://github.com/Sleeper85/esphome-yambms
+
+# YamBMS ( Yet another multi-BMS Merging Solution )
+
+# This YAML is free software: you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation, either version 3
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/gpl.html>.
+
+# +--------------------------------------+
+# | Inverter Proxy BLE Client            |
+# +--------------------------------------+
+# Connects to YamBMS BLE server and creates local sensors from
+# the BLE characteristics. These sensors are then used by the
+# CAN or RS485 inverter output packages.
+#
+# Variables required:
+# ${yambms_server_mac} - MAC address of YamBMS BLE server
+# ${proxy_id} - ID prefix for this proxy (e.g., 'inv_proxy')
+
+# Service UUIDs (must match server)
+substitutions:
+  ble_service_battery_uuid: '00000001-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+  ble_service_limits_uuid: '00000002-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+  ble_service_cells_uuid: '00000003-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+  ble_service_status_uuid: '00000004-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+
+esp32_ble_tracker:
+  scan_parameters:
+    active: false
+
+ble_client:
+  - mac_address: ${yambms_server_mac}
+    id: ${proxy_id}_ble_client
+    auto_connect: true
+
+# +----------------------------------------------+
+# | Connection status                             |
+# +----------------------------------------------+
+binary_sensor:
+  - platform: ble_client
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} BLE Connected"
+    id: ${proxy_id}_ble_connected
+
+# +----------------------------------------------+
+# | Battery core data sensors (Service 1)        |
+# +----------------------------------------------+
+sensor:
+  # Total Voltage (V)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Voltage"
+    id: ${proxy_id}_voltage
+    service_uuid: ${ble_service_battery_uuid}
+    characteristic_uuid: '00000101-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    device_class: voltage
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Current (A)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Current"
+    id: ${proxy_id}_current
+    service_uuid: ${ble_service_battery_uuid}
+    characteristic_uuid: '00000102-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+    device_class: current
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Power (W)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Power"
+    id: ${proxy_id}_power
+    service_uuid: ${ble_service_battery_uuid}
+    characteristic_uuid: '00000103-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    device_class: power
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # SOC (%)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} SOC"
+    id: ${proxy_id}_soc
+    service_uuid: ${ble_service_battery_uuid}
+    characteristic_uuid: '00000104-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    device_class: battery
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # SOH (%)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} SOH"
+    id: ${proxy_id}_soh
+    service_uuid: ${ble_service_battery_uuid}
+    characteristic_uuid: '00000105-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Installed Battery Capacity (Ah)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Capacity"
+    id: ${proxy_id}_capacity
+    service_uuid: ${ble_service_battery_uuid}
+    characteristic_uuid: '00000106-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "Ah"
+    accuracy_decimals: 0
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Battery Capacity Remaining (Ah)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Capacity Remaining"
+    id: ${proxy_id}_capacity_remaining
+    service_uuid: ${ble_service_battery_uuid}
+    characteristic_uuid: '00000107-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "Ah"
+    accuracy_decimals: 0
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Charging Cycles
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Charging Cycles"
+    id: ${proxy_id}_charging_cycles
+    service_uuid: ${ble_service_battery_uuid}
+    characteristic_uuid: '00000108-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    accuracy_decimals: 0
+    state_class: total_increasing
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+
+  # +----------------------------------------------+
+  # | Requested limits sensors (Service 2)         |
+  # +----------------------------------------------+
+
+  # Requested Charge Voltage CVL (V)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Charge Voltage CVL"
+    id: ${proxy_id}_charge_voltage
+    service_uuid: ${ble_service_limits_uuid}
+    characteristic_uuid: '00000201-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    device_class: voltage
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Requested Charge Current CCL (A)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Charge Current CCL"
+    id: ${proxy_id}_charge_current
+    service_uuid: ${ble_service_limits_uuid}
+    characteristic_uuid: '00000202-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Requested Discharge Voltage DVL (V)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Discharge Voltage DVL"
+    id: ${proxy_id}_discharge_voltage
+    service_uuid: ${ble_service_limits_uuid}
+    characteristic_uuid: '00000203-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    device_class: voltage
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Requested Discharge Current DCL (A)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Discharge Current DCL"
+    id: ${proxy_id}_discharge_current
+    service_uuid: ${ble_service_limits_uuid}
+    characteristic_uuid: '00000204-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+
+  # +----------------------------------------------+
+  # | Cell and temperature sensors (Service 3)     |
+  # +----------------------------------------------+
+
+  # Cell Count
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Cell Count"
+    id: ${proxy_id}_cell_count
+    service_uuid: ${ble_service_cells_uuid}
+    characteristic_uuid: '00000301-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    accuracy_decimals: 0
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Min Cell Voltage (V)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Min Cell Voltage"
+    id: ${proxy_id}_min_cell_voltage
+    service_uuid: ${ble_service_cells_uuid}
+    characteristic_uuid: '00000302-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    device_class: voltage
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Max Cell Voltage (V)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Max Cell Voltage"
+    id: ${proxy_id}_max_cell_voltage
+    service_uuid: ${ble_service_cells_uuid}
+    characteristic_uuid: '00000303-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    device_class: voltage
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Delta Cell Voltage (V)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Cell Delta"
+    id: ${proxy_id}_delta_cell_voltage
+    service_uuid: ${ble_service_cells_uuid}
+    characteristic_uuid: '00000304-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    device_class: voltage
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Min Temperature (°C)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Min Temperature"
+    id: ${proxy_id}_min_temperature
+    service_uuid: ${ble_service_cells_uuid}
+    characteristic_uuid: '00000305-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Max Temperature (°C)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Max Temperature"
+    id: ${proxy_id}_max_temperature
+    service_uuid: ${ble_service_cells_uuid}
+    characteristic_uuid: '00000306-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+
+  # +----------------------------------------------+
+  # | Status/alarm sensors (Service 4)             |
+  # +----------------------------------------------+
+
+  # Status flags → stored in global, decoded into binary sensors
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    id: ${proxy_id}_status_raw
+    internal: true
+    service_uuid: ${ble_service_status_uuid}
+    characteristic_uuid: '00000401-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    lambda: |-
+      if (x.size() < 4) return {};
+      uint32_t val;
+      memcpy(&val, &x[0], 4);
+      id(${proxy_id}_status_flags) = val;
+      return (float)val;
+  
+  # Errors bitmask alarm (uint16)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Errors Alarm"
+    id: ${proxy_id}_errors_bitmask_alarm
+    service_uuid: ${ble_service_status_uuid}
+    characteristic_uuid: '00000402-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    accuracy_decimals: 0
+    lambda: |-
+      if (x.size() < 4) return {};
+      uint16_t val;
+      memcpy(&val, &x[0], 2);
+      return (float)val;
+  
+  # Errors bitmask warning (uint16)
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Errors Warning"
+    id: ${proxy_id}_errors_bitmask_warning
+    service_uuid: ${ble_service_status_uuid}
+    characteristic_uuid: '00000403-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    accuracy_decimals: 0
+    lambda: |-
+      if (x.size() < 4) return {};
+      uint16_t val;
+      memcpy(&val, &x[0], 2);
+      return (float)val;
+  
+  # BMS Combined count
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} BMS Combined"
+    id: ${proxy_id}_bms_combined
+    service_uuid: ${ble_service_status_uuid}
+    characteristic_uuid: '00000404-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    accuracy_decimals: 0
+    lambda: |-
+      if (x.size() < 4) return {};
+      float val;
+      memcpy(&val, &x[0], 4);
+      return val;
+  
+  # Heartbeat counter
+  - platform: ble_client
+    type: characteristic
+    ble_client_id: ${proxy_id}_ble_client
+    name: "${proxy_id} Heartbeat"
+    id: ${proxy_id}_heartbeat
+    service_uuid: ${ble_service_status_uuid}
+    characteristic_uuid: '00000405-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+    notify: true
+    accuracy_decimals: 0
+    lambda: |-
+      if (x.size() < 4) return {};
+      uint32_t val;
+      memcpy(&val, &x[0], 4);
+      return (float)val;
+
+# +----------------------------------------------+
+# | Globals for bitfield decoding                |
+# +----------------------------------------------+
+globals:
+  - id: ${proxy_id}_status_flags
+    type: uint32_t
+    initial_value: '0'
+
+# +----------------------------------------------+
+# | Status binary sensors from flags             |
+# +----------------------------------------------+
+# Decoded from status_flags characteristic:
+# Bit 0: Charge enabled
+# Bit 1: Discharge enabled
+# Bit 2: Equalizing
+# Bit 3: Force charge requested
+binary_sensor:
+  - platform: template
+    name: "${proxy_id} Charge Enabled"
+    id: ${proxy_id}_charge_enabled
+    lambda: |-
+      return (id(${proxy_id}_status_flags) & (1 << 0)) != 0;
+  
+  - platform: template
+    name: "${proxy_id} Discharge Enabled"
+    id: ${proxy_id}_discharge_enabled
+    lambda: |-
+      return (id(${proxy_id}_status_flags) & (1 << 1)) != 0;
+  
+  - platform: template
+    name: "${proxy_id} Equalizing"
+    id: ${proxy_id}_equalizing
+    lambda: |-
+      return (id(${proxy_id}_status_flags) & (1 << 2)) != 0;
+  
+  - platform: template
+    name: "${proxy_id} Force Charge"
+    id: ${proxy_id}_force_charge
+    lambda: |-
+      return (id(${proxy_id}_status_flags) & (1 << 3)) != 0;
+
+# +----------------------------------------------+
+# | Update template binary sensors periodically  |
+# +----------------------------------------------+
+interval:
+  - interval: 1s
+    then:
+      - component.update: ${proxy_id}_charge_enabled
+      - component.update: ${proxy_id}_discharge_enabled
+      - component.update: ${proxy_id}_equalizing
+      - component.update: ${proxy_id}_force_charge

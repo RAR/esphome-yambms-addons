@@ -1,0 +1,94 @@
+# +--------------------------------------+
+# | BLE Inverter Proxy - RS485 Example   |
+# +--------------------------------------+
+# Node B: BLE Client → RS485 output
+# Connects to YamBMS BLE server and outputs to inverter via RS485
+#
+# This is a standalone ESP32 that receives battery data from your
+# YamBMS server via BLE and sends it to the inverter over RS485.
+#
+# Note: Only Pylon RS485 protocol is currently supported.
+
+esphome:
+  name: inverter-proxy-rs485
+  friendly_name: "Inverter Proxy RS485"
+
+esp32:
+  board: esp32dev
+  framework:
+    type: arduino
+
+logger:
+  level: INFO
+  # Disable logging on UART1 if using it for RS485
+  baud_rate: 0
+
+api:
+  encryption:
+    key: !secret api_key
+
+ota:
+  - platform: esphome
+    password: !secret ota_password
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+# +--------------------------------------+
+# | Proxy Configuration                  |
+# +--------------------------------------+
+substitutions:
+  proxy_id: 'inv_proxy'
+  proxy_name: 'Inverter Proxy'
+  proxy_uart_id: 'uart_proxy'
+
+  # BLE Server MAC address (Node A)
+  # Get this from Node A logs after first boot
+  # Format: XX:XX:XX:XX:XX:XX
+  yambms_server_mac: 'AA:BB:CC:DD:EE:FF'  # <- Change this!
+
+# +--------------------------------------+
+# | BLE Client + RS485 Output packages   |
+# +--------------------------------------+
+packages:
+  # BLE Client - connect to YamBMS server
+  ble_client:
+    url: https://github.com/RAR/esphome-yambms
+    ref: ble-inverter-proxy
+    refresh: 0s
+    files:
+      - path: 'packages/inverter/inverter_proxy_ble_client.yaml'
+
+  # RS485 output to inverter
+  rs485_output:
+    url: https://github.com/RAR/esphome-yambms
+    ref: ble-inverter-proxy
+    refresh: 0s
+    files:
+      - path: 'packages/inverter/inverter_proxy_rs485.yaml'
+
+# +--------------------------------------+
+# | UART Hardware Configuration          |
+# +--------------------------------------+
+# Override the UART pins for your board
+uart:
+  - id: !extend uart_proxy
+    tx_pin: GPIO17
+    rx_pin: GPIO16
+
+# +--------------------------------------+
+# | Setup Instructions                   |
+# +--------------------------------------+
+# 1. Flash Node A (YamBMS Server) first
+#    - Include yambms_ble_server.yaml in your YamBMS config
+# 2. Check Node A logs for BLE MAC address
+# 3. Update yambms_server_mac above with Node A's MAC
+# 4. Adjust UART TX/RX pins for your board
+# 5. Flash this Node B
+# 6. Node B will auto-connect to Node A via BLE
+# 7. Connect RS485 TX/RX to inverter
+#    - TX: GPIO17 → RS485 A/+
+#    - RX: GPIO16 → RS485 B/-
+#    - Common GND connection required
+# 8. Monitor logs for connection status

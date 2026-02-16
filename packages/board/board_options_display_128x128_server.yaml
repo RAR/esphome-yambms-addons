@@ -1,0 +1,226 @@
+# Updated : 2026.02.06
+# Version : 1.0.0
+# GitHub  : https://github.com/RAR/esphome-yambms
+
+# YamBMS ( Yet another multi-BMS Merging Solution )
+
+# This YAML is free software: you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation, either version 3
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/gpl.html>.
+
+# +--------------------------------------+
+# | BLE Server Display (128x128)         |
+# +--------------------------------------+
+# Display pages for a BLE server node.
+# Shows server status overview and primary BMS sensor data.
+#
+# Required substitutions:
+#   bms_id: The primary/master BMS ID (e.g. '9')
+#   bms_name: Display name for the BMS
+#   bms_battery_count: Total batteries on this server ('1', '2', '3')
+#
+# The overview page shows total battery count and RS485/BLE status.
+# Detail pages show data from the primary (master) BMS.
+
+substitutions:
+  display_rotation: '0'
+  display_auto_next_page_interval: '5s'
+  bms_battery_count: '1'
+
+color:
+  - id: my_black
+    hex: "000000"
+  - id: my_red
+    red: 100%
+    green: 0%
+    blue: 0%
+  - id: my_yellow
+    red: 100%
+    green: 100%
+    blue: 0%
+  - id: my_green
+    red: 0%
+    green: 100%
+    blue: 0%
+  - id: my_blue
+    red: 0%
+    green: 0%
+    blue: 100%
+  - id: my_gray
+    red: 50%
+    green: 50%
+    blue: 50%
+  - id: my_white
+    red: 100%
+    green: 100%
+    blue: 100%
+
+font:
+  - file: "gfonts://Roboto"
+    id: roboto_32
+    size: 32
+  - file: "gfonts://Roboto"
+    id: roboto_24
+    size: 24
+  - file: "gfonts://Roboto"
+    id: roboto_18
+    size: 18
+  - file: "gfonts://Roboto"
+    id: roboto_12
+    size: 12
+  - file: "gfonts://Roboto"
+    id: roboto_10
+    size: 10
+
+# Auto next page interval
+interval:
+  - interval: ${display_auto_next_page_interval}
+    startup_delay: 5s
+    then:
+      - display.page.show_next: my_display
+      - component.update: my_display
+
+# +--------------------------------------+
+# | Display Pages                        |
+# +--------------------------------------+
+display:
+  - id: !extend my_display
+    rotation: ${display_rotation}
+    pages:
+
+      # ---- Page 1 : Server Status Overview ----
+      - id: page1
+        lambda: |-
+          // Border
+          it.rectangle(0, 0, it.get_width(), it.get_height(), id(my_blue));
+
+          // Title
+          it.print(64, 6, id(roboto_12), id(my_blue), TextAlign::TOP_CENTER, "BLE Server");
+
+          // ESP status
+          if (id(esp32_online_status).state)
+            it.print(64, 24, id(roboto_18), id(my_green), TextAlign::TOP_CENTER, "ESP Online");
+          else
+            it.print(64, 24, id(roboto_18), id(my_red), TextAlign::TOP_CENTER, "ESP Offline");
+
+          // RS485 / BMS comm status
+          if (id(bms${bms_id}_online_status).state)
+            it.print(64, 48, id(roboto_18), id(my_green), TextAlign::TOP_CENTER, "RS485 OK");
+          else
+            it.print(64, 48, id(roboto_18), id(my_red), TextAlign::TOP_CENTER, "RS485 Fault");
+
+          // BLE client connection
+          if (id(bms${bms_id}_ble_client_connected))
+            it.print(64, 72, id(roboto_18), id(my_green), TextAlign::TOP_CENTER, "BLE Connected");
+          else
+            it.print(64, 72, id(roboto_18), id(my_yellow), TextAlign::TOP_CENTER, "BLE Waiting");
+
+          // Footer: battery count
+          it.printf(64, 112, id(roboto_12), id(my_gray), TextAlign::TOP_CENTER, "${bms_battery_count} batt | ${bms_name}");
+
+      # ---- Page 2 : SoC ----
+      - id: page2
+        lambda: |-
+          it.rectangle(0, 0, it.get_width(), it.get_height(), id(my_blue));
+          it.line(0, 20, 128, 20, id(my_blue));
+          it.line(0, 100, 128, 100, id(my_blue));
+
+          // Header: status indicators
+          if (id(bms${bms_id}_online_status).state)
+            it.print(0, 5, id(roboto_12), id(my_green), TextAlign::TOP_LEFT, "RS485");
+          else
+            it.print(0, 5, id(roboto_12), id(my_red), TextAlign::TOP_LEFT, "RS485");
+          if (id(bms${bms_id}_ble_client_connected))
+            it.print(115, 5, id(roboto_12), id(my_green), TextAlign::TOP_RIGHT, "BLE");
+          else
+            it.print(115, 5, id(roboto_12), id(my_yellow), TextAlign::TOP_RIGHT, "BLE");
+
+          // SoC
+          it.print(64, 35, id(roboto_24), id(my_gray), TextAlign::CENTER, "SoC %");
+          it.printf(64, 70, id(roboto_32), id(my_white), TextAlign::CENTER, "%.0f", id(bms${bms_id}_state_of_charge).state);
+
+          // Footer
+          it.printf(64, 112, id(roboto_12), id(my_yellow), TextAlign::TOP_CENTER, "${bms_name}");
+
+      # ---- Page 3 : Voltage + Current ----
+      - id: page3
+        lambda: |-
+          it.rectangle(0, 0, it.get_width(), it.get_height(), id(my_blue));
+          it.line(0, 20, 128, 20, id(my_blue));
+          it.line(0, 100, 128, 100, id(my_blue));
+
+          if (id(bms${bms_id}_online_status).state)
+            it.print(0, 5, id(roboto_12), id(my_green), TextAlign::TOP_LEFT, "RS485");
+          else
+            it.print(0, 5, id(roboto_12), id(my_red), TextAlign::TOP_LEFT, "RS485");
+          if (id(bms${bms_id}_ble_client_connected))
+            it.print(115, 5, id(roboto_12), id(my_green), TextAlign::TOP_RIGHT, "BLE");
+          else
+            it.print(115, 5, id(roboto_12), id(my_yellow), TextAlign::TOP_RIGHT, "BLE");
+
+          it.print(64, 30, id(roboto_12), id(my_gray), TextAlign::CENTER, "Voltage");
+          it.printf(64, 50, id(roboto_24), id(my_white), TextAlign::CENTER, "%.1fV", id(bms${bms_id}_total_voltage).state);
+
+          it.print(64, 75, id(roboto_12), id(my_gray), TextAlign::CENTER, "Current");
+          it.printf(64, 95, id(roboto_24), id(my_white), TextAlign::CENTER, "%.1fA", id(bms${bms_id}_current).state);
+
+          it.printf(64, 112, id(roboto_12), id(my_yellow), TextAlign::TOP_CENTER, "%.0fW", id(bms${bms_id}_power).state);
+
+      # ---- Page 4 : Cell Voltages ----
+      - id: page4
+        lambda: |-
+          it.rectangle(0, 0, it.get_width(), it.get_height(), id(my_blue));
+          it.line(0, 20, 128, 20, id(my_blue));
+          it.line(0, 100, 128, 100, id(my_blue));
+
+          if (id(bms${bms_id}_online_status).state)
+            it.print(0, 5, id(roboto_12), id(my_green), TextAlign::TOP_LEFT, "RS485");
+          else
+            it.print(0, 5, id(roboto_12), id(my_red), TextAlign::TOP_LEFT, "RS485");
+          if (id(bms${bms_id}_ble_client_connected))
+            it.print(115, 5, id(roboto_12), id(my_green), TextAlign::TOP_RIGHT, "BLE");
+          else
+            it.print(115, 5, id(roboto_12), id(my_yellow), TextAlign::TOP_RIGHT, "BLE");
+
+          it.print(64, 28, id(roboto_12), id(my_gray), TextAlign::CENTER, "Cell Voltages");
+
+          it.printf(10, 46, id(roboto_12), id(my_green), TextAlign::TOP_LEFT, "Min: %.3fV", id(bms${bms_id}_min_cell_voltage).state);
+          it.printf(10, 62, id(roboto_12), id(my_red), TextAlign::TOP_LEFT, "Max: %.3fV", id(bms${bms_id}_max_cell_voltage).state);
+          it.printf(10, 78, id(roboto_12), id(my_yellow), TextAlign::TOP_LEFT, "Avg: %.3fV", id(bms${bms_id}_cell_average_voltage).state);
+
+          it.printf(64, 112, id(roboto_12), id(my_yellow), TextAlign::TOP_CENTER, "Delta %.0fmV", id(bms${bms_id}_delta_cell_voltage).state * 1000);
+
+      # ---- Page 5 : Temperatures ----
+      - id: page5
+        lambda: |-
+          it.rectangle(0, 0, it.get_width(), it.get_height(), id(my_blue));
+          it.line(0, 20, 128, 20, id(my_blue));
+          it.line(0, 100, 128, 100, id(my_blue));
+
+          if (id(bms${bms_id}_online_status).state)
+            it.print(0, 5, id(roboto_12), id(my_green), TextAlign::TOP_LEFT, "RS485");
+          else
+            it.print(0, 5, id(roboto_12), id(my_red), TextAlign::TOP_LEFT, "RS485");
+          if (id(bms${bms_id}_ble_client_connected))
+            it.print(115, 5, id(roboto_12), id(my_green), TextAlign::TOP_RIGHT, "BLE");
+          else
+            it.print(115, 5, id(roboto_12), id(my_yellow), TextAlign::TOP_RIGHT, "BLE");
+
+          it.print(64, 28, id(roboto_12), id(my_gray), TextAlign::CENTER, "Temperatures");
+
+          it.printf(10, 44, id(roboto_12), id(my_white), TextAlign::TOP_LEFT, "T1: %.1f C", id(bms${bms_id}_temperature_sensor_1).state);
+          it.printf(10, 58, id(roboto_12), id(my_white), TextAlign::TOP_LEFT, "T2: %.1f C", id(bms${bms_id}_temperature_sensor_2).state);
+          it.printf(10, 72, id(roboto_12), id(my_white), TextAlign::TOP_LEFT, "T3: %.1f C", id(bms${bms_id}_temperature_sensor_3).state);
+          it.printf(10, 86, id(roboto_12), id(my_white), TextAlign::TOP_LEFT, "T4: %.1f C", id(bms${bms_id}_temperature_sensor_4).state);
+
+          it.printf(64, 112, id(roboto_12), id(my_yellow), TextAlign::TOP_CENTER, "%.0f / %.0f C",
+            id(bms${bms_id}_min_temperature).state, id(bms${bms_id}_max_temperature).state);

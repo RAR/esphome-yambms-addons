@@ -1,0 +1,306 @@
+# Updated : 2025.02.07
+# Version : 4.0.0
+# GitHub  : https://github.com/Sleeper85/esphome-yambms
+
+# YamBMS ( Yet another multi-BMS Merging Solution )
+
+# This YAML is free software: you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation, either version 3
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/gpl.html>.
+
+# +--------------------------------------+
+# | BLE Server Configuration             |
+# +--------------------------------------+
+# This file configures a BLE GATT server to expose BMS data
+# as an alternative to Modbus communication.
+#
+# ARCHITECTURE (v4.0 - One Service Per BMS):
+# Each BMS gets ONE service containing 5 packed characteristics.
+# This minimizes GATT attribute count (3 services for 3 BMSes vs 15)
+# and ensures reliable service discovery within ESP32 BLE stack limits.
+#
+# Service UUID: 4fafc2${bms_id_hex}-1fb5-459e-8fcc-c5c9c331914b
+#   One unique service per BMS, identified by bms_id_hex.
+#
+# Characteristic UUIDs (bms_id_hex embedded):
+#   beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b201 - Status (6 bytes)
+#   beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b205 - Battery (40 bytes)
+#   beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b20e - Cell voltages (8 bytes)
+#   beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b212 - Temperatures (8 bytes)
+#   beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b216 - Limits (10 bytes)
+#
+# MULTI-BMS SUPPORT:
+#   1. Include this package once per BMS with unique bms_id and bms_id_hex
+#   2. Each BMS registers its own service with unique UUID
+#   3. A single client BLE connection can access all BMSes on one server
+#
+# Required substitutions:
+#   bms_id: The BMS ID number
+#   bms_id_hex: 2-char hex ID for UUIDs (e.g. '09', '0a', '0b')
+#   bms_update_interval: BMS polling interval (also used for BLE notifications)
+
+# Configure BLE stack for dual role (client + server)
+esp32_ble:
+  io_capability: none
+  max_connections: 5
+
+globals:
+  - id: bms${bms_id}_ble_client_connected
+    type: bool
+    restore_value: no
+    initial_value: "false"
+
+esp32_ble_server:
+  manufacturer: "YamBMS"
+  model: "BMS ${bms_id}"
+  on_connect:
+    - lambda: |-
+        id(bms${bms_id}_ble_client_connected) = true;
+        ESP_LOGI("ble_server", "Client connected");
+  on_disconnect:
+    - lambda: |-
+        id(bms${bms_id}_ble_client_connected) = false;
+        ESP_LOGI("ble_server", "Client disconnected");
+  services:
+    # ==========================================
+    # BMS ${bms_id} Service
+    # ==========================================
+    # One service per BMS with all 5 data characteristics.
+    - uuid: "4fafc2${bms_id_hex}-1fb5-459e-8fcc-c5c9c331914b"
+      advertise: true
+      characteristics:
+        # ------------------------------------------
+        # CHARACTERISTIC 1: STATUS (6 bytes)
+        # ------------------------------------------
+        #   [0]: online_status (0/1)
+        #   [1]: charging_allowed (0/1)
+        #   [2]: discharging_allowed (0/1)
+        #   [3]: equalizing (0/1)
+        #   [4-5]: errors_bitmask (uint16_t LE)
+        - id: bms${bms_id}_ble_status_packet
+          uuid: "beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b201"
+          description: "BMS ${bms_id} Status"
+          read: true
+          notify: true
+          value:
+            data: !lambda |-
+              uint16_t errors = 0;
+              float err_state = id(bms${bms_id}_yambms_errors_bitmask).state;
+              if (!std::isnan(err_state)) errors = static_cast<uint16_t>(err_state);
+              
+              return std::vector<uint8_t>{
+                static_cast<uint8_t>(id(bms${bms_id}_online_status).state ? 1 : 0),
+                static_cast<uint8_t>(id(bms${bms_id}_charging_allowed).state ? 1 : 0),
+                static_cast<uint8_t>(id(bms${bms_id}_discharging_allowed).state ? 1 : 0),
+                static_cast<uint8_t>(id(bms${bms_id}_equalizing).state ? 1 : 0),
+                static_cast<uint8_t>(errors & 0xFF),
+                static_cast<uint8_t>((errors >> 8) & 0xFF)
+              };
+
+        # ------------------------------------------
+        # CHARACTERISTIC 2: BATTERY DATA (40 bytes)
+        # ------------------------------------------
+        #   [0-3]: total_voltage (uint32_t LE, mV)
+        #   [4-7]: current (int32_t LE, mA)
+        #   [8-11]: power (int32_t LE, mW)
+        #   [12-13]: soc (uint16_t LE, 0.1%)
+        #   [14-15]: soh (uint16_t LE, 0.1%)
+        #   [16-19]: capacity (uint32_t LE, mAh)
+        #   [20-23]: capacity_remaining (uint32_t LE, mAh)
+        #   [24-27]: charging_cycles (uint32_t LE)
+        #   [28-31]: charging_power (uint32_t LE, mW)
+        #   [32-35]: discharging_power (uint32_t LE, mW)
+        #   [36-39]: reserved
+        - id: bms${bms_id}_ble_battery_packet
+          uuid: "beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b205"
+          description: "BMS ${bms_id} Battery"
+          read: true
+          notify: true
+          value:
+            data: !lambda |-
+              auto pack_u32 = [](std::vector<uint8_t>& v, uint32_t val) {
+                v.push_back(val & 0xFF);
+                v.push_back((val >> 8) & 0xFF);
+                v.push_back((val >> 16) & 0xFF);
+                v.push_back((val >> 24) & 0xFF);
+              };
+              auto pack_i32 = [](std::vector<uint8_t>& v, int32_t val) {
+                v.push_back(val & 0xFF);
+                v.push_back((val >> 8) & 0xFF);
+                v.push_back((val >> 16) & 0xFF);
+                v.push_back((val >> 24) & 0xFF);
+              };
+              auto pack_u16 = [](std::vector<uint8_t>& v, uint16_t val) {
+                v.push_back(val & 0xFF);
+                v.push_back((val >> 8) & 0xFF);
+              };
+              auto safe_float = [](float val, float def = 0.0f) {
+                return std::isnan(val) ? def : val;
+              };
+              
+              std::vector<uint8_t> data;
+              data.reserve(40);
+              
+              // Voltage (mV)
+              pack_u32(data, static_cast<uint32_t>(safe_float(id(bms${bms_id}_total_voltage).state) * 1000));
+              // Current (mA)
+              pack_i32(data, static_cast<int32_t>(safe_float(id(bms${bms_id}_current).state) * 1000));
+              // Power (mW)
+              pack_i32(data, static_cast<int32_t>(safe_float(id(bms${bms_id}_power).state) * 1000));
+              // SoC (0.1%)
+              pack_u16(data, static_cast<uint16_t>(safe_float(id(bms${bms_id}_battery_soc).state) * 10));
+              // SoH (0.1%)
+              pack_u16(data, static_cast<uint16_t>(safe_float(id(bms${bms_id}_battery_soh).state) * 10));
+              // Capacity (mAh)
+              pack_u32(data, static_cast<uint32_t>(safe_float(id(bms${bms_id}_battery_capacity).state) * 1000));
+              // Capacity remaining (mAh)
+              pack_u32(data, static_cast<uint32_t>(safe_float(id(bms${bms_id}_battery_capacity_remaining).state) * 1000));
+              // Charging cycles
+              pack_u32(data, static_cast<uint32_t>(safe_float(id(bms${bms_id}_charging_cycles).state)));
+              // Charging power (mW)
+              pack_u32(data, static_cast<uint32_t>(safe_float(id(bms${bms_id}_charging_power).state) * 1000));
+              // Discharging power (mW)
+              pack_u32(data, static_cast<uint32_t>(safe_float(id(bms${bms_id}_discharging_power).state) * 1000));
+              
+              return data;
+
+        # ------------------------------------------
+        # CHARACTERISTIC 3: CELL VOLTAGES (8 bytes)
+        # ------------------------------------------
+        #   [0-1]: max_cell_voltage (uint16_t LE, mV)
+        #   [2-3]: max_voltage_cell (uint16_t LE)
+        #   [4-5]: min_cell_voltage (uint16_t LE, mV)
+        #   [6-7]: min_voltage_cell (uint16_t LE)
+        - id: bms${bms_id}_ble_cell_packet
+          uuid: "beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b20e"
+          description: "BMS ${bms_id} Cell"
+          read: true
+          notify: true
+          value:
+            data: !lambda |-
+              auto safe_float = [](float val, float def = 0.0f) {
+                return std::isnan(val) ? def : val;
+              };
+              
+              uint16_t max_v = static_cast<uint16_t>(safe_float(id(bms${bms_id}_max_cell_voltage).state) * 1000);
+              uint16_t max_cell = static_cast<uint16_t>(safe_float(id(bms${bms_id}_max_voltage_cell).state));
+              uint16_t min_v = static_cast<uint16_t>(safe_float(id(bms${bms_id}_min_cell_voltage).state) * 1000);
+              uint16_t min_cell = static_cast<uint16_t>(safe_float(id(bms${bms_id}_min_voltage_cell).state));
+              
+              return std::vector<uint8_t>{
+                static_cast<uint8_t>(max_v & 0xFF),
+                static_cast<uint8_t>((max_v >> 8) & 0xFF),
+                static_cast<uint8_t>(max_cell & 0xFF),
+                static_cast<uint8_t>((max_cell >> 8) & 0xFF),
+                static_cast<uint8_t>(min_v & 0xFF),
+                static_cast<uint8_t>((min_v >> 8) & 0xFF),
+                static_cast<uint8_t>(min_cell & 0xFF),
+                static_cast<uint8_t>((min_cell >> 8) & 0xFF)
+              };
+
+        # ------------------------------------------
+        # CHARACTERISTIC 4: TEMPERATURES (8 bytes)
+        # ------------------------------------------
+        #   [0-1]: min_temperature (int16_t LE, 0.1°C)
+        #   [2-3]: min_temperature_sensor (uint16_t LE)
+        #   [4-5]: max_temperature (int16_t LE, 0.1°C)
+        #   [6-7]: max_temperature_sensor (uint16_t LE)
+        - id: bms${bms_id}_ble_temp_packet
+          uuid: "beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b212"
+          description: "BMS ${bms_id} Temperature"
+          read: true
+          notify: true
+          value:
+            data: !lambda |-
+              auto safe_temp = [](float val) -> int16_t {
+                if (std::isnan(val)) return -2730;  // Absolute zero indicator
+                return static_cast<int16_t>(val * 10);
+              };
+              auto safe_float = [](float val, float def = 0.0f) {
+                return std::isnan(val) ? def : val;
+              };
+              
+              int16_t min_t = safe_temp(id(bms${bms_id}_min_temperature).state);
+              uint16_t min_sensor = static_cast<uint16_t>(safe_float(id(bms${bms_id}_min_temperature_sensor).state));
+              int16_t max_t = safe_temp(id(bms${bms_id}_max_temperature).state);
+              uint16_t max_sensor = static_cast<uint16_t>(safe_float(id(bms${bms_id}_max_temperature_sensor).state));
+              
+              return std::vector<uint8_t>{
+                static_cast<uint8_t>(min_t & 0xFF),
+                static_cast<uint8_t>((min_t >> 8) & 0xFF),
+                static_cast<uint8_t>(min_sensor & 0xFF),
+                static_cast<uint8_t>((min_sensor >> 8) & 0xFF),
+                static_cast<uint8_t>(max_t & 0xFF),
+                static_cast<uint8_t>((max_t >> 8) & 0xFF),
+                static_cast<uint8_t>(max_sensor & 0xFF),
+                static_cast<uint8_t>((max_sensor >> 8) & 0xFF)
+              };
+
+        # ------------------------------------------
+        # CHARACTERISTIC 5: LIMITS (10 bytes)
+        # ------------------------------------------
+        #   [0-1]: max_charge_current (uint16_t LE, 0.1A)
+        #   [2-3]: max_discharge_current (uint16_t LE, 0.1A)
+        #   [4-5]: cell_ovp (uint16_t LE, mV)
+        #   [6-7]: cell_uvp (uint16_t LE, mV)
+        #   [8-9]: balance_trigger_voltage (uint16_t LE, mV)
+        - id: bms${bms_id}_ble_limits_packet
+          uuid: "beb5483e-36e1-4688-b7f5-ea0736${bms_id_hex}b216"
+          description: "BMS ${bms_id} Limits"
+          read: true
+          notify: true
+          value:
+            data: !lambda |-
+              auto safe_float = [](float val, float def = 0.0f) {
+                return std::isnan(val) ? def : val;
+              };
+              
+              uint16_t max_charge = static_cast<uint16_t>(safe_float(id(bms${bms_id}_max_charge_current).state) * 10);
+              uint16_t max_discharge = static_cast<uint16_t>(safe_float(id(bms${bms_id}_max_discharge_current).state) * 10);
+              uint16_t ovp = static_cast<uint16_t>(safe_float(id(bms${bms_id}_cell_ovp).state) * 1000);
+              uint16_t uvp = static_cast<uint16_t>(safe_float(id(bms${bms_id}_cell_uvp).state) * 1000);
+              uint16_t balance = static_cast<uint16_t>(safe_float(id(bms${bms_id}_balance_trigger_voltage).state) * 1000);
+              
+              return std::vector<uint8_t>{
+                static_cast<uint8_t>(max_charge & 0xFF),
+                static_cast<uint8_t>((max_charge >> 8) & 0xFF),
+                static_cast<uint8_t>(max_discharge & 0xFF),
+                static_cast<uint8_t>((max_discharge >> 8) & 0xFF),
+                static_cast<uint8_t>(ovp & 0xFF),
+                static_cast<uint8_t>((ovp >> 8) & 0xFF),
+                static_cast<uint8_t>(uvp & 0xFF),
+                static_cast<uint8_t>((uvp >> 8) & 0xFF),
+                static_cast<uint8_t>(balance & 0xFF),
+                static_cast<uint8_t>((balance >> 8) & 0xFF)
+              };
+
+# +--------------------------------------+
+# | Interval to trigger notifications    |
+# +--------------------------------------+
+
+interval:
+  - interval: ${bms_update_interval}
+    then:
+      - if:
+          condition:
+            lambda: 'return id(bms${bms_id}_ble_client_connected);'
+          then:
+            - ble_server.characteristic.notify:
+                id: bms${bms_id}_ble_status_packet
+            - ble_server.characteristic.notify:
+                id: bms${bms_id}_ble_battery_packet
+            - ble_server.characteristic.notify:
+                id: bms${bms_id}_ble_cell_packet
+            - ble_server.characteristic.notify:
+                id: bms${bms_id}_ble_temp_packet
+            - ble_server.characteristic.notify:
+                id: bms${bms_id}_ble_limits_packet

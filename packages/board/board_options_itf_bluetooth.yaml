@@ -1,0 +1,79 @@
+# Updated : 2025.02.02
+# Version : 1.0.0
+# GitHub  : https://github.com/Sleeper85/esphome-yambms
+
+# YamBMS ( Yet another multi-BMS Merging Solution )
+
+# This YAML is free software: you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation, either version 3
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/gpl.html>.
+
+# +--------------------------------------+
+# | BLE Client Interface                 |
+# +--------------------------------------+
+# This file configures a BLE client connection to a YamBMS BLE server.
+# Include this once per BLE server you want to connect to.
+#
+# Required substitutions:
+#   ble_client_id: Unique ID for this client (e.g., "server1")
+#   ble_server_mac: MAC address of the BLE server
+#
+# Usage:
+#   packages:
+#     ble_server1:
+#       url: ...
+#       file: packages/board/board_options_itf_bluetooth.yaml
+#       vars:
+#         ble_client_id: "server1"
+#         ble_server_mac: "48:CA:43:B5:EE:26"
+#
+#     bms9:
+#       url: ...
+#       file: packages/bms/bms_combine_ble_client.yaml
+#       vars:
+#         bms_id: "9"
+#         bms_name: "JBD-BMS 1"
+#         ble_client_id: "server1"  # References the client above
+
+# +--------------------------------------+
+# | ESP32 BLE Configuration              |
+# +--------------------------------------+
+
+esp32_ble:
+  io_capability: none
+  max_connections: 3
+  max_notifications: 20  # 3 BMS × 5 characteristics = 15 needed
+
+esp32_ble_tracker:
+  scan_parameters:
+    interval: 1100ms
+    window: 1100ms
+    active: true
+
+# +--------------------------------------+
+# | BLE Client Connection                |
+# +--------------------------------------+
+
+ble_client:
+  - mac_address: ${ble_server_mac}
+    id: ble_client_${ble_client_id}
+    auto_connect: true
+    on_connect:
+      then:
+        - logger.log:
+            level: INFO
+            format: "BLE Server ${ble_client_id} connected (${ble_server_mac})"
+    on_disconnect:
+      then:
+        - logger.log:
+            level: WARN
+            format: "BLE Server ${ble_client_id} disconnected"
