@@ -101,6 +101,7 @@ sensor:
     service_uuid: ${ble_service_battery_uuid}
     characteristic_uuid: '00000101-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "V"
     accuracy_decimals: 2
     device_class: voltage
@@ -120,6 +121,7 @@ sensor:
     service_uuid: ${ble_service_battery_uuid}
     characteristic_uuid: '00000102-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "A"
     accuracy_decimals: 2
     device_class: current
@@ -139,6 +141,7 @@ sensor:
     service_uuid: ${ble_service_battery_uuid}
     characteristic_uuid: '00000103-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "W"
     accuracy_decimals: 1
     device_class: power
@@ -158,6 +161,7 @@ sensor:
     service_uuid: ${ble_service_battery_uuid}
     characteristic_uuid: '00000104-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "%"
     accuracy_decimals: 0
     device_class: battery
@@ -177,6 +181,7 @@ sensor:
     service_uuid: ${ble_service_battery_uuid}
     characteristic_uuid: '00000105-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "%"
     accuracy_decimals: 0
     state_class: measurement
@@ -195,6 +200,7 @@ sensor:
     service_uuid: ${ble_service_battery_uuid}
     characteristic_uuid: '00000106-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "Ah"
     accuracy_decimals: 0
     state_class: measurement
@@ -213,6 +219,7 @@ sensor:
     service_uuid: ${ble_service_battery_uuid}
     characteristic_uuid: '00000107-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "Ah"
     accuracy_decimals: 0
     state_class: measurement
@@ -231,6 +238,7 @@ sensor:
     service_uuid: ${ble_service_battery_uuid}
     characteristic_uuid: '00000108-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     accuracy_decimals: 0
     state_class: total_increasing
     lambda: |-
@@ -252,6 +260,7 @@ sensor:
     service_uuid: ${ble_service_limits_uuid}
     characteristic_uuid: '00000201-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "V"
     accuracy_decimals: 2
     device_class: voltage
@@ -271,6 +280,7 @@ sensor:
     service_uuid: ${ble_service_limits_uuid}
     characteristic_uuid: '00000202-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "A"
     accuracy_decimals: 1
     device_class: current
@@ -290,6 +300,7 @@ sensor:
     service_uuid: ${ble_service_limits_uuid}
     characteristic_uuid: '00000203-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "V"
     accuracy_decimals: 2
     device_class: voltage
@@ -309,6 +320,7 @@ sensor:
     service_uuid: ${ble_service_limits_uuid}
     characteristic_uuid: '00000204-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "A"
     accuracy_decimals: 1
     device_class: current
@@ -332,6 +344,7 @@ sensor:
     service_uuid: ${ble_service_cells_uuid}
     characteristic_uuid: '00000301-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     accuracy_decimals: 0
     state_class: measurement
     lambda: |-
@@ -349,6 +362,7 @@ sensor:
     service_uuid: ${ble_service_cells_uuid}
     characteristic_uuid: '00000302-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "V"
     accuracy_decimals: 3
     device_class: voltage
@@ -368,6 +382,7 @@ sensor:
     service_uuid: ${ble_service_cells_uuid}
     characteristic_uuid: '00000303-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "V"
     accuracy_decimals: 3
     device_class: voltage
@@ -387,6 +402,7 @@ sensor:
     service_uuid: ${ble_service_cells_uuid}
     characteristic_uuid: '00000304-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "V"
     accuracy_decimals: 3
     device_class: voltage
@@ -406,6 +422,7 @@ sensor:
     service_uuid: ${ble_service_cells_uuid}
     characteristic_uuid: '00000305-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "°C"
     accuracy_decimals: 1
     device_class: temperature
@@ -425,6 +442,7 @@ sensor:
     service_uuid: ${ble_service_cells_uuid}
     characteristic_uuid: '00000306-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     unit_of_measurement: "°C"
     accuracy_decimals: 1
     device_class: temperature
@@ -448,6 +466,7 @@ sensor:
     service_uuid: ${ble_service_status_uuid}
     characteristic_uuid: '00000401-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     lambda: |-
       if (x.size() < 4) return {};
       uint32_t val;
@@ -464,6 +483,7 @@ sensor:
     service_uuid: ${ble_service_status_uuid}
     characteristic_uuid: '00000402-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     accuracy_decimals: 0
     lambda: |-
       if (x.size() < 4) return {};
@@ -480,6 +500,7 @@ sensor:
     service_uuid: ${ble_service_status_uuid}
     characteristic_uuid: '00000403-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     accuracy_decimals: 0
     lambda: |-
       if (x.size() < 4) return {};
@@ -496,6 +517,7 @@ sensor:
     service_uuid: ${ble_service_status_uuid}
     characteristic_uuid: '00000404-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     accuracy_decimals: 0
     lambda: |-
       if (x.size() < 4) return {};
@@ -512,6 +534,7 @@ sensor:
     service_uuid: ${ble_service_status_uuid}
     characteristic_uuid: '00000405-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
     notify: true
+    update_interval: 10s
     accuracy_decimals: 0
     lambda: |-
       if (x.size() < 4) return {};
