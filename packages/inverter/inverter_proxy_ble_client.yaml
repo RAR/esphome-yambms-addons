@@ -75,26 +75,18 @@ binary_sensor:
   - platform: template
     name: "${proxy_id} Charge Enabled"
     id: ${proxy_id}_charge_enabled
-    lambda: |-
-      return (id(${proxy_id}_status_flags) & (1 << 0)) != 0;
   
   - platform: template
     name: "${proxy_id} Discharge Enabled"
     id: ${proxy_id}_discharge_enabled
-    lambda: |-
-      return (id(${proxy_id}_status_flags) & (1 << 1)) != 0;
   
   - platform: template
     name: "${proxy_id} Equalizing"
     id: ${proxy_id}_equalizing
-    lambda: |-
-      return (id(${proxy_id}_status_flags) & (1 << 2)) != 0;
   
   - platform: template
     name: "${proxy_id} Force Charge"
     id: ${proxy_id}_force_charge
-    lambda: |-
-      return (id(${proxy_id}_status_flags) & (1 << 3)) != 0;
 
 # +----------------------------------------------+
 # | Battery core data sensors (Service 1)        |
@@ -541,7 +533,9 @@ globals:
 interval:
   - interval: 1s
     then:
-      - component.update: ${proxy_id}_charge_enabled
-      - component.update: ${proxy_id}_discharge_enabled
-      - component.update: ${proxy_id}_equalizing
-      - component.update: ${proxy_id}_force_charge
+      - lambda: |-
+          uint32_t flags = id(${proxy_id}_status_flags);
+          id(${proxy_id}_charge_enabled).publish_state((flags & (1 << 0)) != 0);
+          id(${proxy_id}_discharge_enabled).publish_state((flags & (1 << 1)) != 0);
+          id(${proxy_id}_equalizing).publish_state((flags & (1 << 2)) != 0);
+          id(${proxy_id}_force_charge).publish_state((flags & (1 << 3)) != 0);
