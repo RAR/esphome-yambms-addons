@@ -318,12 +318,12 @@ esp32_ble_server:
               return std::vector<uint8_t>(data, data + 4);
 
 # +----------------------------------------------+
-# | Notify all characteristics every 2 seconds   |
+# | Notify all characteristics periodically      |
 # +----------------------------------------------+
 # Triggering notify re-evaluates each value lambda and pushes fresh data
 # to any connected BLE client that has subscribed to notifications.
 interval:
-  - interval: 2s
+  - interval: 5s
     then:
       # Battery core
       - ble_server.characteristic.notify: { id: ble_char_voltage }
