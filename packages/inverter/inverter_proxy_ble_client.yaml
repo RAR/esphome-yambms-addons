@@ -53,6 +53,35 @@ binary_sensor:
     name: "${proxy_id} BLE Connected"
     id: ${proxy_id}_ble_connected
 
+  # Decoded from status_flags characteristic:
+  # Bit 0: Charge enabled
+  # Bit 1: Discharge enabled
+  # Bit 2: Equalizing
+  # Bit 3: Force charge requested
+  - platform: template
+    name: "${proxy_id} Charge Enabled"
+    id: ${proxy_id}_charge_enabled
+    lambda: |-
+      return (id(${proxy_id}_status_flags) & (1 << 0)) != 0;
+  
+  - platform: template
+    name: "${proxy_id} Discharge Enabled"
+    id: ${proxy_id}_discharge_enabled
+    lambda: |-
+      return (id(${proxy_id}_status_flags) & (1 << 1)) != 0;
+  
+  - platform: template
+    name: "${proxy_id} Equalizing"
+    id: ${proxy_id}_equalizing
+    lambda: |-
+      return (id(${proxy_id}_status_flags) & (1 << 2)) != 0;
+  
+  - platform: template
+    name: "${proxy_id} Force Charge"
+    id: ${proxy_id}_force_charge
+    lambda: |-
+      return (id(${proxy_id}_status_flags) & (1 << 3)) != 0;
+
 # +----------------------------------------------+
 # | Battery core data sensors (Service 1)        |
 # +----------------------------------------------+
@@ -491,39 +520,6 @@ globals:
   - id: ${proxy_id}_status_flags
     type: uint32_t
     initial_value: '0'
-
-# +----------------------------------------------+
-# | Status binary sensors from flags             |
-# +----------------------------------------------+
-# Decoded from status_flags characteristic:
-# Bit 0: Charge enabled
-# Bit 1: Discharge enabled
-# Bit 2: Equalizing
-# Bit 3: Force charge requested
-binary_sensor:
-  - platform: template
-    name: "${proxy_id} Charge Enabled"
-    id: ${proxy_id}_charge_enabled
-    lambda: |-
-      return (id(${proxy_id}_status_flags) & (1 << 0)) != 0;
-  
-  - platform: template
-    name: "${proxy_id} Discharge Enabled"
-    id: ${proxy_id}_discharge_enabled
-    lambda: |-
-      return (id(${proxy_id}_status_flags) & (1 << 1)) != 0;
-  
-  - platform: template
-    name: "${proxy_id} Equalizing"
-    id: ${proxy_id}_equalizing
-    lambda: |-
-      return (id(${proxy_id}_status_flags) & (1 << 2)) != 0;
-  
-  - platform: template
-    name: "${proxy_id} Force Charge"
-    id: ${proxy_id}_force_charge
-    lambda: |-
-      return (id(${proxy_id}_status_flags) & (1 << 3)) != 0;
 
 # +----------------------------------------------+
 # | Update template binary sensors periodically  |
