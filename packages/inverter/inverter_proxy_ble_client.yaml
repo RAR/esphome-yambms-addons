@@ -43,15 +43,29 @@ ble_client:
   - mac_address: ${yambms_server_mac}
     id: ${proxy_id}_ble_client
     auto_connect: true
+    on_connect:
+      then:
+        - binary_sensor.template.publish:
+            id: ${proxy_id}_ble_connected
+            state: true
+        - logger.log: "BLE server connected"
+    on_disconnect:
+      then:
+        - binary_sensor.template.publish:
+            id: ${proxy_id}_ble_connected
+            state: false
+        - logger.log:
+            level: WARN
+            format: "BLE server disconnected"
 
 # +----------------------------------------------+
 # | Connection status                             |
 # +----------------------------------------------+
 binary_sensor:
-  - platform: ble_client
-    ble_client_id: ${proxy_id}_ble_client
+  - platform: template
     name: "${proxy_id} BLE Connected"
     id: ${proxy_id}_ble_connected
+    device_class: connectivity
 
   # Decoded from status_flags characteristic:
   # Bit 0: Charge enabled
