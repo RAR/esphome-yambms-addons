@@ -1,5 +1,5 @@
 # Updated : 2026.02.17
-# Version : 2.0.0
+# Version : 2.1.0
 # GitHub  : https://github.com/Sleeper85/esphome-yambms
 
 # YamBMS ( Yet another multi-BMS Merging Solution )
@@ -39,20 +39,26 @@
 # Note: SMA RS485 protocol is not yet implemented.
 #
 # Variables required:
-# ${proxy_id}       - ID of the BLE client proxy (must match inverter_proxy_ble_client.yaml)
-# ${proxy_uart_id}  - UART ID for RS485 (e.g., 'uart_1')
-# ${proxy_name}     - Display name for this proxy
+# ${proxy_id}         - ID of the BLE client proxy (must match inverter_proxy_ble_client.yaml)
+# ${charger_id}       - Unique ID for this charger output (e.g., 'charger_a')
+# ${charger_name}     - Display name for this charger (e.g., 'Charger A')
+# ${charger_uart_id}  - UART ID for RS485 (e.g., 'uart_charger_a')
+#
+# Multi-charger setup:
+#   The BLE client (proxy_id) is shared. Each charger gets its own
+#   charger_id, charger_name, and charger_uart_id. Include this
+#   package once per charger with different vars.
 
 globals:
-  - id: ${proxy_id}_rs485_last_request
+  - id: ${charger_id}_rs485_last_request
     type: uint32_t
     restore_value: no
     initial_value: "0"
 
 switch:
   - platform: template
-    name: "${proxy_name} Charge Enable"
-    id: ${proxy_id}_charge_enable
+    name: "${charger_name} Charge Enable"
+    id: ${charger_id}_charge_enable
     icon: "mdi:battery-charging"
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
@@ -60,8 +66,8 @@ switch:
 
 select:
   - platform: template
-    name: "${proxy_name} RS485 Protocol"
-    id: ${proxy_id}_rs485_protocol
+    name: "${charger_name} RS485 Protocol"
+    id: ${charger_id}_rs485_protocol
     options:
       - "Disabled"
       - "Pylon"
@@ -72,22 +78,22 @@ select:
 
 binary_sensor:
   - platform: template
-    id: ${proxy_id}_rs485_status
-    name: "${proxy_name} RS485 Status"
+    id: ${charger_id}_rs485_status
+    name: "${charger_name} RS485 Status"
     entity_category: diagnostic
 
 sensor:
   - platform: template
-    id: ${proxy_id}_rs485_heartbeat
-    name: "${proxy_name} RS485 Heartbeat"
+    id: ${charger_id}_rs485_heartbeat
+    name: "${charger_name} RS485 Heartbeat"
     unit_of_measurement: "s"
     accuracy_decimals: 0
     entity_category: diagnostic
 
 text_sensor:
   - platform: template
-    id: ${proxy_id}_charge_mode
-    name: "${proxy_name} Charge Mode"
+    id: ${charger_id}_charge_mode
+    name: "${charger_name} Charge Mode"
     icon: "mdi:information-outline"
     entity_category: diagnostic
 
@@ -97,25 +103,25 @@ interval:
     then:
       - lambda: |-
           uint32_t now = millis();
-          if (id(${proxy_id}_rs485_last_request) > 0) {
-            uint32_t elapsed = (now - id(${proxy_id}_rs485_last_request)) / 1000;
-            id(${proxy_id}_rs485_heartbeat).publish_state(elapsed);
+          if (id(${charger_id}_rs485_last_request) > 0) {
+            uint32_t elapsed = (now - id(${charger_id}_rs485_last_request)) / 1000;
+            id(${charger_id}_rs485_heartbeat).publish_state(elapsed);
             // Timeout after 30 seconds
-            id(${proxy_id}_rs485_status).publish_state(elapsed <= 30);
+            id(${charger_id}_rs485_status).publish_state(elapsed <= 30);
           }
           // Update charge mode text sensor
           std::string mode;
-          if (id(${proxy_id}_rs485_protocol).active_index() == 0) {
+          if (id(${charger_id}_rs485_protocol).active_index() == 0) {
             mode = "Disabled";
           } else if (!id(${proxy_id}_ble_connected).state) {
             mode = "BLE Disconnected";
-          } else if (id(${proxy_id}_charge_enable).state) {
+          } else if (id(${charger_id}_charge_enable).state) {
             mode = "Charging Allowed";
           } else {
             mode = "Charging Blocked";
           }
-          if (!id(${proxy_id}_charge_mode).has_state() || id(${proxy_id}_charge_mode).state != mode) {
-            id(${proxy_id}_charge_mode).publish_state(mode);
+          if (!id(${charger_id}_charge_mode).has_state() || id(${charger_id}_charge_mode).state != mode) {
+            id(${charger_id}_charge_mode).publish_state(mode);
           }
 
 # +----------------------------------------------+
@@ -129,7 +135,7 @@ interval:
 # LLLL = length field with checksum nibble
 # CHECKSUM = ones complement + 1 of sum of frame chars
 uart:
-  - id: ${proxy_uart_id}
+  - id: ${charger_uart_id}
     baud_rate: 115200
     rx_buffer_size: 256
     debug:
@@ -138,10 +144,10 @@ uart:
         delimiter: "\r"
       sequence:
         - lambda: |-
-            if (id(${proxy_id}_rs485_protocol).active_index() == 0) return;  // Disabled
+            if (id(${charger_id}_rs485_protocol).active_index() == 0) return;  // Disabled
             if (!id(${proxy_id}_ble_connected).state) return;  // BLE not connected
 
-            id(${proxy_id}_rs485_last_request) = millis();
+            id(${charger_id}_rs485_last_request) = millis();
 
             // Validate Pylon frame: must start with '~' and have enough bytes for header
             if (bytes.size() < 18) return;
@@ -183,11 +189,11 @@ uart:
               std::string frame_data = std::string("20024600") + len_field + info;
               std::string checksum = calc_checksum(frame_data);
               std::string full = "~" + frame_data + checksum + "\r";
-              id(${proxy_uart_id}).write_str(full.c_str());
+              id(${charger_uart_id}).write_str(full.c_str());
             };
 
             // -- Charge control state --
-            bool charge_ok = id(${proxy_id}_charge_enable).state;
+            bool charge_ok = id(${charger_id}_charge_enable).state;
 
             // ========================================
             // Command 0x60: Battery Pack Info
