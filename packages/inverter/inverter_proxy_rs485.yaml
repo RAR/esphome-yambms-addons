@@ -43,6 +43,8 @@
 # ${charger_id}       - Unique ID for this charger output (e.g., 'charger_a')
 # ${charger_name}     - Display name for this charger (e.g., 'Charger A')
 # ${charger_uart_id}  - UART ID for RS485 (e.g., 'uart_charger_a')
+# ${charger_tx_pin}   - UART TX GPIO pin number
+# ${charger_rx_pin}   - UART RX GPIO pin number
 #
 # Multi-charger setup:
 #   The BLE client (proxy_id) is shared. Each charger gets its own
@@ -136,6 +138,8 @@ interval:
 # CHECKSUM = ones complement + 1 of sum of frame chars
 uart:
   - id: ${charger_uart_id}
+    tx_pin: ${charger_tx_pin}
+    rx_pin: ${charger_rx_pin}
     baud_rate: 115200
     rx_buffer_size: 256
     debug:
