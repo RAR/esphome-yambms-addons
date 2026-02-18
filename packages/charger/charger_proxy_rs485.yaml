@@ -1,0 +1,350 @@
+# Charger RS485 Proxy - Pylontech protocol responder
+# GitHub: https://github.com/RAR/esphome-yambms-addons
+#
+# Used as a remote package with vars:
+#   packages:
+#     charger_a:
+#       url: https://github.com/RAR/esphome-yambms-addons
+#       ref: main
+#       files:
+#         - path: 'packages/charger/charger_proxy_rs485.yaml'
+#           vars:
+#             charger_id: 'charger_a'
+#             charger_name: 'Charger A'
+#             charger_uart_id: 'uart_charger_a'
+#             charger_tx_pin: '17'
+#             charger_rx_pin: '18'
+#             charger_flow_control_pin: '21'
+#
+# Required vars:
+#   charger_id:               Unique ID (e.g., 'charger_a')
+#   charger_name:             Display name (e.g., 'Charger A')
+#   charger_uart_id:          UART ID (e.g., 'uart_charger_a')
+#   charger_tx_pin:           UART TX GPIO pin
+#   charger_rx_pin:           UART RX GPIO pin
+#   charger_flow_control_pin: DE/RE direction control GPIO pin
+#
+# Also requires ${proxy_id} from top-level substitutions
+# (references shared BLE client sensors).
+#
+# Full Pylontech RS485 protocol emulator (0x60-0x63).
+# Responds to charger queries as if it were a Pylontech battery.
+
+globals:
+  - id: ${charger_id}_rs485_last_request
+    type: uint32_t
+    restore_value: no
+    initial_value: "0"
+
+switch:
+  - platform: template
+    name: "${charger_name} Charge Enable"
+    id: ${charger_id}_charge_enable
+    icon: "mdi:battery-charging"
+    optimistic: true
+    restore_mode: RESTORE_DEFAULT_ON
+    entity_category: config
+
+select:
+  - platform: template
+    name: "${charger_name} RS485 Protocol"
+    id: ${charger_id}_rs485_protocol
+    options:
+      - "Disabled"
+      - "Pylon"
+    restore_value: true
+    initial_option: "Pylon"
+    optimistic: true
+    entity_category: config
+
+binary_sensor:
+  - platform: template
+    id: ${charger_id}_rs485_status
+    name: "${charger_name} RS485 Status"
+    entity_category: diagnostic
+
+sensor:
+  - platform: template
+    id: ${charger_id}_rs485_heartbeat
+    name: "${charger_name} RS485 Heartbeat"
+    unit_of_measurement: "s"
+    accuracy_decimals: 0
+    entity_category: diagnostic
+  - platform: template
+    id: ${charger_id}_sent_cvl
+    name: "${charger_name} Sent CVL"
+    unit_of_measurement: "V"
+    accuracy_decimals: 1
+    icon: "mdi:flash"
+  - platform: template
+    id: ${charger_id}_sent_ccl
+    name: "${charger_name} Sent CCL"
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    icon: "mdi:current-dc"
+
+text_sensor:
+  - platform: template
+    id: ${charger_id}_charge_mode
+    name: "${charger_name} Charge Mode"
+    icon: "mdi:information-outline"
+    entity_category: diagnostic
+
+number:
+  - platform: template
+    name: "${charger_name} CVL Override"
+    id: ${charger_id}_cvl_override
+    icon: "mdi:flash"
+    unit_of_measurement: "V"
+    min_value: 0
+    max_value: 58
+    step: 0.1
+    initial_value: 0
+    restore_value: true
+    optimistic: true
+    entity_category: config
+    mode: box
+  - platform: template
+    name: "${charger_name} CCL Override"
+    id: ${charger_id}_ccl_override
+    icon: "mdi:current-dc"
+    unit_of_measurement: "A"
+    min_value: 0
+    max_value: 300
+    step: 1
+    initial_value: 0
+    restore_value: true
+    optimistic: true
+    entity_category: config
+    mode: box
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          uint32_t now = millis();
+          if (id(${charger_id}_rs485_last_request) > 0) {
+            uint32_t elapsed = (now - id(${charger_id}_rs485_last_request)) / 1000;
+            id(${charger_id}_rs485_heartbeat).publish_state(elapsed);
+            id(${charger_id}_rs485_status).publish_state(elapsed <= 30);
+          }
+          std::string mode;
+          if (id(${charger_id}_rs485_protocol).active_index() == 0) {
+            mode = "Disabled";
+          } else if (!id(${proxy_id}_ble_connected).state) {
+            mode = "BLE Disconnected";
+          } else if (id(${charger_id}_charge_enable).state) {
+            mode = "Charging Allowed";
+          } else {
+            mode = "Charging Blocked";
+          }
+          if (!id(${charger_id}_charge_mode).has_state() || id(${charger_id}_charge_mode).state != mode) {
+            id(${charger_id}_charge_mode).publish_state(mode);
+          }
+
+uart:
+  - id: ${charger_uart_id}
+    tx_pin: ${charger_tx_pin}
+    rx_pin: ${charger_rx_pin}
+    baud_rate: 9600
+    rx_buffer_size: 256
+    flow_control_pin: ${charger_flow_control_pin}
+    debug:
+      direction: RX
+      dummy_receiver: true
+      after:
+        delimiter: "\r"
+        timeout: 2000ms
+      sequence:
+        - lambda: |-
+            if (bytes.size() > 0) {
+              std::string ascii;
+              for (uint8_t b : bytes) ascii += (b >= 0x20 && b < 0x7F) ? (char)b : '.';
+              ESP_LOGD("rs485_rx", "[${charger_id}] %d bytes: %s", bytes.size(), ascii.c_str());
+            }
+
+            if (id(${charger_id}_rs485_protocol).active_index() == 0) return;
+            if (!id(${proxy_id}_ble_connected).state) {
+              ESP_LOGW("rs485_rx", "[${charger_id}] BLE not connected, ignoring request");
+              return;
+            }
+
+            id(${charger_id}_rs485_last_request) = millis();
+
+            if (bytes.size() < 18) return;
+            if (bytes[0] != 0x7E) return;
+
+            char cid2[3] = { (char)bytes[7], (char)bytes[8], 0 };
+            ESP_LOGD("proxy_rs485", "Pylon request CID2=%s (%d bytes)", cid2, bytes.size());
+
+            auto calc_length = [](int len) -> std::string {
+              uint8_t n1 = (len >> 8) & 0x0F;
+              uint8_t n2 = (len >> 4) & 0x0F;
+              uint8_t n3 = len & 0x0F;
+              uint8_t lchk = (~(n1 + n2 + n3) & 0x0F) + 1;
+              char buf[5];
+              snprintf(buf, sizeof(buf), "%1X%03X", lchk & 0x0F, len);
+              return std::string(buf);
+            };
+
+            auto calc_checksum = [](const std::string &data) -> std::string {
+              uint16_t sum = 0;
+              for (char c : data) sum += (uint8_t)c;
+              sum = (~sum + 1) & 0xFFFF;
+              char buf[5];
+              snprintf(buf, sizeof(buf), "%04X", sum);
+              return std::string(buf);
+            };
+
+            auto send_frame = [&](const std::string &info) {
+              std::string len_field = calc_length(info.length());
+              std::string frame_data = std::string("20024600") + len_field + info;
+              std::string checksum = calc_checksum(frame_data);
+              std::string full = "~" + frame_data + checksum + "\r";
+              id(${charger_uart_id}).write_str(full.c_str());
+            };
+
+            bool charge_ok = id(${charger_id}_charge_enable).state;
+
+            // 0x60: Battery Pack Info
+            if (cid2[0] == '6' && cid2[1] == '0') {
+              char info[65];
+              int pos = 0;
+              const char* dev_name = "US2000C   ";
+              const char* mfr_name = "Pylontech           ";
+              for (int i = 0; i < 10; i++)
+                pos += snprintf(info + pos, sizeof(info) - pos, "%02X", (uint8_t)dev_name[i]);
+              pos += snprintf(info + pos, sizeof(info) - pos, "%02X%02X", 1, 10);
+              for (int i = 0; i < 20; i++)
+                pos += snprintf(info + pos, sizeof(info) - pos, "%02X", (uint8_t)mfr_name[i]);
+              send_frame(std::string(info));
+              ESP_LOGD("proxy_rs485", "Sent 0x60 Pack Info");
+            }
+
+            // 0x61: Analog Data
+            else if (cid2[0] == '6' && cid2[1] == '1') {
+              float voltage = id(${proxy_id}_voltage).state;
+              float current = id(${proxy_id}_current).state;
+              float real_soc = id(${proxy_id}_soc).state;
+              float soh_val = id(${proxy_id}_soh).state;
+              float cyc_val = id(${proxy_id}_charging_cycles).state;
+              float max_cell = id(${proxy_id}_max_cell_voltage).state;
+              float min_cell = id(${proxy_id}_min_cell_voltage).state;
+              float max_temp = id(${proxy_id}_max_temperature).state;
+              float min_temp = id(${proxy_id}_min_temperature).state;
+
+              if (std::isnan(voltage) || std::isnan(current) || std::isnan(real_soc)) return;
+
+              if (std::isnan(soh_val)) soh_val = 100.0f;
+              if (std::isnan(cyc_val)) cyc_val = 0;
+              if (std::isnan(max_cell)) max_cell = voltage / 16.0f;
+              if (std::isnan(min_cell)) min_cell = max_cell;
+              if (std::isnan(max_temp)) max_temp = 25.0f;
+              if (std::isnan(min_temp)) min_temp = max_temp;
+
+              float reported_soc = charge_ok ? real_soc : 100.0f;
+
+              uint16_t v_mv = (uint16_t)(voltage * 1000);
+              int16_t i_signed = (int16_t)(current * 100);
+              uint16_t i_ca = (uint16_t)i_signed;
+              uint8_t soc_pct = (uint8_t)reported_soc;
+              uint16_t cyc = (uint16_t)cyc_val;
+              uint8_t soh = (uint8_t)soh_val;
+              uint16_t max_cv = (uint16_t)(max_cell * 1000);
+              uint16_t min_cv = (uint16_t)(min_cell * 1000);
+              float avg_temp = (max_temp + min_temp) / 2.0f;
+              uint16_t avg_t_dk = (uint16_t)((avg_temp + 273.15f) * 10);
+              uint16_t max_t_dk = (uint16_t)((max_temp + 273.15f) * 10);
+              uint16_t min_t_dk = (uint16_t)((min_temp + 273.15f) * 10);
+
+              char info[99];
+              snprintf(info, sizeof(info),
+                "%04X%04X%02X%04X%04X%02X%02X"
+                "%04X%04X%04X%04X"
+                "%04X%04X%04X%04X%04X"
+                "%04X%04X%04X%04X%04X"
+                "%04X%04X%04X%04X%04X",
+                v_mv, i_ca, soc_pct, cyc, cyc, soh, soh,
+                max_cv, 0x0101, min_cv, 0x0108,
+                avg_t_dk, max_t_dk, 0x0103, min_t_dk, 0x0109,
+                avg_t_dk, max_t_dk, 0x0101, min_t_dk, 0x0101,
+                avg_t_dk, max_t_dk, 0x0101, min_t_dk, 0x0101);
+              send_frame(std::string(info));
+              ESP_LOGD("proxy_rs485", "Sent 0x61: V=%.1f I=%.1f SOC=%.0f%s",
+                voltage, current, reported_soc, charge_ok ? "" : " [SPOOFED]");
+            }
+
+            // 0x62: Alarm Info
+            else if (cid2[0] == '6' && cid2[1] == '2') {
+              uint16_t alarms = 0;
+              uint16_t warnings = 0;
+              if (!std::isnan(id(${proxy_id}_errors_bitmask_alarm).state))
+                alarms = (uint16_t)id(${proxy_id}_errors_bitmask_alarm).state;
+              if (!std::isnan(id(${proxy_id}_errors_bitmask_warning).state))
+                warnings = (uint16_t)id(${proxy_id}_errors_bitmask_warning).state;
+
+              uint8_t alarm1 = (uint8_t)(alarms & 0xFF);
+              uint8_t alarm2 = (uint8_t)((alarms >> 8) & 0xFF);
+              uint8_t prot1 = (uint8_t)(warnings & 0xFF);
+              uint8_t prot2 = (uint8_t)((warnings >> 8) & 0xFF);
+
+              char info[9];
+              snprintf(info, sizeof(info), "%02X%02X%02X%02X", alarm1, alarm2, prot1, prot2);
+              send_frame(std::string(info));
+              ESP_LOGD("proxy_rs485", "Sent 0x62 Alarms: %s", info);
+            }
+
+            // 0x63: Charge/Discharge Management
+            else if (cid2[0] == '6' && cid2[1] == '3') {
+              float real_cvl = id(${proxy_id}_charge_voltage).state;
+              float real_ccl = id(${proxy_id}_charge_current).state;
+              float dvl = id(${proxy_id}_discharge_voltage).state;
+              float dcl = id(${proxy_id}_discharge_current).state;
+              float voltage = id(${proxy_id}_voltage).state;
+
+              if (std::isnan(real_cvl) || std::isnan(real_ccl) ||
+                  std::isnan(dvl) || std::isnan(dcl) || std::isnan(voltage)) return;
+
+              float reported_cvl = real_cvl;
+              float reported_ccl = real_ccl;
+              uint8_t status_byte = 0;
+
+              if (id(${proxy_id}_charge_enabled).state)
+                status_byte |= (1 << 7);
+              if (id(${proxy_id}_discharge_enabled).state)
+                status_byte |= (1 << 6);
+              if (id(${proxy_id}_force_charge).state)
+                status_byte |= (1 << 5);
+
+              // Apply CVL/CCL overrides (0 = use BMS value)
+              float cvl_ovr = id(${charger_id}_cvl_override).state;
+              float ccl_ovr = id(${charger_id}_ccl_override).state;
+              if (!std::isnan(cvl_ovr) && cvl_ovr > 0) reported_cvl = cvl_ovr;
+              if (!std::isnan(ccl_ovr) && ccl_ovr > 0) reported_ccl = ccl_ovr;
+
+              if (!charge_ok) {
+                reported_cvl = voltage;
+                reported_ccl = 0.0f;
+                status_byte &= ~(1 << 7);
+                status_byte &= ~(1 << 5);
+              }
+
+              uint16_t cvl_mv = (uint16_t)(reported_cvl * 1000);
+              uint16_t dvl_mv = (uint16_t)(dvl * 1000);
+              uint16_t ccl_da = (uint16_t)(reported_ccl * 10);
+              uint16_t dcl_da = (uint16_t)(dcl * 10);
+
+              char info[19];
+              snprintf(info, sizeof(info), "%04X%04X%04X%04X%02X",
+                cvl_mv, dvl_mv, ccl_da, dcl_da, status_byte);
+              send_frame(std::string(info));
+              id(${charger_id}_sent_cvl).publish_state(reported_cvl);
+              id(${charger_id}_sent_ccl).publish_state(reported_ccl);
+              ESP_LOGI("proxy_rs485", "Sent 0x63: CVL=%.1f CCL=%.1f %s%s",
+                reported_cvl, reported_ccl,
+                charge_ok ? "CHARGE ON" : "CHARGE BLOCKED",
+                (cvl_ovr > 0 || ccl_ovr > 0) ? " [OVERRIDE]" : "");
+            }
+            else {
+              ESP_LOGD("proxy_rs485", "Unknown Pylon command: %s", cid2);
+            }
