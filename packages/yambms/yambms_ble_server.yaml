@@ -1,5 +1,5 @@
-# Updated : 2026.02.05
-# Version : 1.7.0
+# Updated : 2026.02.17
+# Version : 2.0.0
 # GitHub  : https://github.com/Sleeper85/esphome-yambms
 
 # YamBMS ( Yet another multi-BMS Merging Solution )
@@ -20,335 +20,250 @@
 # +--------------------------------------+
 # | YamBMS BLE Server                    |
 # +--------------------------------------+
-# Exposes YamBMS combined data as BLE server for wireless inverter proxy
-# Allows remote ESP32 node to act as inverter interface via BLE connection
+# Exposes YamBMS combined data as BLE server for wireless inverter proxy.
 #
-# The value lambdas are re-evaluated each time a notification is triggered.
-# The interval at the bottom triggers notifications every 2 seconds to push
-# fresh data to connected BLE clients.
+# ARCHITECTURE (v2.0 - Packed Characteristics):
+# One service with 4 packed characteristics instead of 4 services
+# with 23 individual characteristics. This avoids BLE notification
+# subscription limits on the client side.
+#
+# Service UUID: 00000001-ba5e-f4ee-5ca1-eb1e5e4b1ce0
+#
+# Characteristic UUIDs:
+#   00001001-...-eb1e5e4b1ce0 - Battery Core (28 bytes)
+#   00001002-...-eb1e5e4b1ce0 - Limits (12 bytes)
+#   00001003-...-eb1e5e4b1ce0 - Cells & Temperature (12 bytes)
+#   00001004-...-eb1e5e4b1ce0 - Status & Alarms (16 bytes)
 
-# Service UUIDs (custom namespace)
-# Base: 0000XXXX-ba5e-f4ee-5ca1-eb1e5e4b1ce0
 substitutions:
-  ble_service_battery_uuid: '00000001-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-  ble_service_limits_uuid: '00000002-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-  ble_service_cells_uuid: '00000003-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-  ble_service_status_uuid: '00000004-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+  ble_service_uuid: '00000001-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+
+globals:
+  - id: ${yambms_id}_ble_client_connected
+    type: bool
+    restore_value: no
+    initial_value: "false"
 
 esp32_ble_server:
   manufacturer: "YamBMS"
   model: "BLE Proxy Server"
-  
+  on_connect:
+    - lambda: |-
+        id(${yambms_id}_ble_client_connected) = true;
+        ESP_LOGI("ble_server", "Client connected");
+  on_disconnect:
+    - lambda: |-
+        id(${yambms_id}_ble_client_connected) = false;
+        ESP_LOGI("ble_server", "Client disconnected");
+
   services:
-    # +-----------------------------------------+
-    # | Service 1: Battery core data (0x0001)   |
-    # +-----------------------------------------+
-    - uuid: ${ble_service_battery_uuid}
+    - uuid: ${ble_service_uuid}
+      advertise: true
       characteristics:
-        # Total Voltage (V) - float
-        - id: ble_char_voltage
-          uuid: '00000101-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+        # ------------------------------------------
+        # CHARACTERISTIC 1: BATTERY CORE (28 bytes)
+        # ------------------------------------------
+        #   [0-3]:   voltage (uint32_t LE, mV)
+        #   [4-7]:   current (int32_t LE, mA)
+        #   [8-11]:  power (int32_t LE, mW)
+        #   [12-13]: soc (uint16_t LE, 0.1%)
+        #   [14-15]: soh (uint16_t LE, 0.1%)
+        #   [16-19]: capacity (uint32_t LE, mAh)
+        #   [20-23]: capacity_remaining (uint32_t LE, mAh)
+        #   [24-27]: charging_cycles (uint32_t LE)
+        - id: ble_char_battery
+          uuid: '00001001-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+          description: 'Battery Core'
           read: true
           notify: true
-          description: 'Total Voltage'
           value:
             data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_total_voltage).state).get_data();
-        
-        # Current (A) - float
-        - id: ble_char_current
-          uuid: '00000102-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Current'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_current).state).get_data();
-        
-        # Power (W) - float
-        - id: ble_char_power
-          uuid: '00000103-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Power'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_power).state).get_data();
-        
-        # SOC (%) - float
-        - id: ble_char_soc
-          uuid: '00000104-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'State of Charge'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_battery_soc).state).get_data();
-        
-        # SOH (%) - float
-        - id: ble_char_soh
-          uuid: '00000105-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'State of Health'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_battery_soh).state).get_data();
-        
-        # Installed Battery Capacity (Ah) - float
-        - id: ble_char_capacity
-          uuid: '00000106-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Battery Capacity'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_installed_battery_capacity).state).get_data();
-        
-        # Battery Capacity Remaining (Ah) - float
-        - id: ble_char_capacity_remaining
-          uuid: '00000107-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Capacity Remaining'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_battery_capacity_remaining).state).get_data();
-        
-        # Charging Cycles - float
-        - id: ble_char_charging_cycles
-          uuid: '00000108-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Charging Cycles'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_charging_cycles).state).get_data();
+              auto pack_u32 = [](std::vector<uint8_t>& v, uint32_t val) {
+                v.push_back(val & 0xFF);
+                v.push_back((val >> 8) & 0xFF);
+                v.push_back((val >> 16) & 0xFF);
+                v.push_back((val >> 24) & 0xFF);
+              };
+              auto pack_i32 = [](std::vector<uint8_t>& v, int32_t val) {
+                v.push_back(val & 0xFF);
+                v.push_back((val >> 8) & 0xFF);
+                v.push_back((val >> 16) & 0xFF);
+                v.push_back((val >> 24) & 0xFF);
+              };
+              auto pack_u16 = [](std::vector<uint8_t>& v, uint16_t val) {
+                v.push_back(val & 0xFF);
+                v.push_back((val >> 8) & 0xFF);
+              };
+              auto safe = [](float val, float def = 0.0f) {
+                return std::isnan(val) ? def : val;
+              };
+              
+              std::vector<uint8_t> data;
+              data.reserve(28);
+              
+              pack_u32(data, static_cast<uint32_t>(safe(id(${yambms_id}_total_voltage).state) * 1000));
+              pack_i32(data, static_cast<int32_t>(safe(id(${yambms_id}_current).state) * 1000));
+              pack_i32(data, static_cast<int32_t>(safe(id(${yambms_id}_power).state) * 1000));
+              pack_u16(data, static_cast<uint16_t>(safe(id(${yambms_id}_battery_soc).state) * 10));
+              pack_u16(data, static_cast<uint16_t>(safe(id(${yambms_id}_battery_soh).state) * 10));
+              pack_u32(data, static_cast<uint32_t>(safe(id(${yambms_id}_installed_battery_capacity).state) * 1000));
+              pack_u32(data, static_cast<uint32_t>(safe(id(${yambms_id}_battery_capacity_remaining).state) * 1000));
+              pack_u32(data, static_cast<uint32_t>(safe(id(${yambms_id}_charging_cycles).state)));
+              
+              return data;
 
-    # +-----------------------------------------+
-    # | Service 2: Requested limits (0x0002)    |
-    # +-----------------------------------------+
-    - uuid: ${ble_service_limits_uuid}
-      characteristics:
-        # Requested Charge Voltage CVL (V) - float
-        - id: ble_char_charge_voltage
-          uuid: '00000201-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+        # ------------------------------------------
+        # CHARACTERISTIC 2: LIMITS (12 bytes)
+        # ------------------------------------------
+        #   [0-3]:   charge_voltage CVL (uint32_t LE, mV)
+        #   [4-5]:   charge_current CCL (uint16_t LE, 0.1A)
+        #   [6-9]:   discharge_voltage DVL (uint32_t LE, mV)
+        #   [10-11]: discharge_current DCL (uint16_t LE, 0.1A)
+        - id: ble_char_limits
+          uuid: '00001002-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+          description: 'Limits'
           read: true
           notify: true
-          description: 'Charge Voltage CVL'
           value:
             data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_requested_charge_voltage).state).get_data();
-        
-        # Requested Charge Current CCL (A) - float
-        - id: ble_char_charge_current
-          uuid: '00000202-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Charge Current CCL'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_requested_charge_current).state).get_data();
-        
-        # Requested Discharge Voltage DVL (V) - float
-        - id: ble_char_discharge_voltage
-          uuid: '00000203-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Discharge Voltage DVL'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_requested_discharge_voltage).state).get_data();
-        
-        # Requested Discharge Current DCL (A) - float
-        - id: ble_char_discharge_current
-          uuid: '00000204-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Discharge Current DCL'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_requested_discharge_current).state).get_data();
+              auto pack_u32 = [](std::vector<uint8_t>& v, uint32_t val) {
+                v.push_back(val & 0xFF);
+                v.push_back((val >> 8) & 0xFF);
+                v.push_back((val >> 16) & 0xFF);
+                v.push_back((val >> 24) & 0xFF);
+              };
+              auto pack_u16 = [](std::vector<uint8_t>& v, uint16_t val) {
+                v.push_back(val & 0xFF);
+                v.push_back((val >> 8) & 0xFF);
+              };
+              auto safe = [](float val, float def = 0.0f) {
+                return std::isnan(val) ? def : val;
+              };
+              
+              std::vector<uint8_t> data;
+              data.reserve(12);
+              
+              pack_u32(data, static_cast<uint32_t>(safe(id(${yambms_id}_requested_charge_voltage).state) * 1000));
+              pack_u16(data, static_cast<uint16_t>(safe(id(${yambms_id}_requested_charge_current).state) * 10));
+              pack_u32(data, static_cast<uint32_t>(safe(id(${yambms_id}_requested_discharge_voltage).state) * 1000));
+              pack_u16(data, static_cast<uint16_t>(safe(id(${yambms_id}_requested_discharge_current).state) * 10));
+              
+              return data;
 
-    # +-----------------------------------------+
-    # | Service 3: Cell and temperature (0x0003)|
-    # +-----------------------------------------+
-    - uuid: ${ble_service_cells_uuid}
-      characteristics:
-        # Cell count - float
-        - id: ble_char_cell_count
-          uuid: '00000301-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+        # ------------------------------------------
+        # CHARACTERISTIC 3: CELLS & TEMP (12 bytes)
+        # ------------------------------------------
+        #   [0-1]:   cell_count (uint16_t LE)
+        #   [2-3]:   min_cell_voltage (uint16_t LE, mV)
+        #   [4-5]:   max_cell_voltage (uint16_t LE, mV)
+        #   [6-7]:   delta_cell_voltage (uint16_t LE, mV)
+        #   [8-9]:   min_temperature (int16_t LE, 0.1°C)
+        #   [10-11]: max_temperature (int16_t LE, 0.1°C)
+        - id: ble_char_cells
+          uuid: '00001003-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+          description: 'Cells and Temperature'
           read: true
           notify: true
-          description: 'Cell Count'
           value:
             data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_cell_count).state).get_data();
-        
-        # Min Cell Voltage (V) - float
-        - id: ble_char_min_cell_voltage
-          uuid: '00000302-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Min Cell Voltage'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_min_cell_voltage).state).get_data();
-        
-        # Max Cell Voltage (V) - float
-        - id: ble_char_max_cell_voltage
-          uuid: '00000303-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Max Cell Voltage'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_max_cell_voltage).state).get_data();
-        
-        # Delta Cell Voltage (V) - float
-        - id: ble_char_delta_cell_voltage
-          uuid: '00000304-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Delta Cell Voltage'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_delta_cell_voltage).state).get_data();
-        
-        # Min Temperature (°C) - float
-        - id: ble_char_min_temperature
-          uuid: '00000305-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Min Temperature'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_min_temperature).state).get_data();
-        
-        # Max Temperature (°C) - float
-        - id: ble_char_max_temperature
-          uuid: '00000306-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Max Temperature'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_max_temperature).state).get_data();
+              auto safe = [](float val, float def = 0.0f) {
+                return std::isnan(val) ? def : val;
+              };
+              auto safe_temp = [](float val) -> int16_t {
+                if (std::isnan(val)) return -2730;
+                return static_cast<int16_t>(val * 10);
+              };
+              
+              uint16_t cell_count = static_cast<uint16_t>(safe(id(${yambms_id}_cell_count).state));
+              uint16_t min_cv = static_cast<uint16_t>(safe(id(${yambms_id}_min_cell_voltage).state) * 1000);
+              uint16_t max_cv = static_cast<uint16_t>(safe(id(${yambms_id}_max_cell_voltage).state) * 1000);
+              uint16_t delta = static_cast<uint16_t>(safe(id(${yambms_id}_delta_cell_voltage).state) * 1000);
+              int16_t min_t = safe_temp(id(${yambms_id}_min_temperature).state);
+              int16_t max_t = safe_temp(id(${yambms_id}_max_temperature).state);
+              
+              return std::vector<uint8_t>{
+                static_cast<uint8_t>(cell_count & 0xFF), static_cast<uint8_t>((cell_count >> 8) & 0xFF),
+                static_cast<uint8_t>(min_cv & 0xFF), static_cast<uint8_t>((min_cv >> 8) & 0xFF),
+                static_cast<uint8_t>(max_cv & 0xFF), static_cast<uint8_t>((max_cv >> 8) & 0xFF),
+                static_cast<uint8_t>(delta & 0xFF), static_cast<uint8_t>((delta >> 8) & 0xFF),
+                static_cast<uint8_t>(min_t & 0xFF), static_cast<uint8_t>((min_t >> 8) & 0xFF),
+                static_cast<uint8_t>(max_t & 0xFF), static_cast<uint8_t>((max_t >> 8) & 0xFF)
+              };
 
-    # +-----------------------------------------+
-    # | Service 4: Status and alarms (0x0004)   |
-    # +-----------------------------------------+
-    - uuid: ${ble_service_status_uuid}
-      characteristics:
-        # Status flags (uint32 bitfield)
-        # Bit 0: Charge enabled (charging_instruction == "Bulk" or "Float")
-        # Bit 1: Discharge enabled (discharging_instruction)
-        # Bit 2: Equalizing
-        # Bit 3: Force charge requested
-        - id: ble_char_status_flags
-          uuid: '00000401-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+        # ------------------------------------------
+        # CHARACTERISTIC 4: STATUS & ALARMS (16 bytes)
+        # ------------------------------------------
+        #   [0-3]:   status_flags (uint32_t LE, bitfield)
+        #              Bit 0: Charge enabled
+        #              Bit 1: Discharge enabled
+        #              Bit 2: Equalizing
+        #              Bit 3: Force charge requested
+        #   [4-5]:   errors_alarm (uint16_t LE)
+        #   [6-7]:   errors_warning (uint16_t LE)
+        #   [8-11]:  bms_combined (uint32_t LE, count)
+        #   [12-15]: heartbeat (uint32_t LE, counter)
+        - id: ble_char_status
+          uuid: '00001004-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
+          description: 'Status and Alarms'
           read: true
           notify: true
-          description: 'Status Flags'
           value:
             data: !lambda |-
+              auto pack_u32 = [](std::vector<uint8_t>& v, uint32_t val) {
+                v.push_back(val & 0xFF);
+                v.push_back((val >> 8) & 0xFF);
+                v.push_back((val >> 16) & 0xFF);
+                v.push_back((val >> 24) & 0xFF);
+              };
+              auto pack_u16 = [](std::vector<uint8_t>& v, uint16_t val) {
+                v.push_back(val & 0xFF);
+                v.push_back((val >> 8) & 0xFF);
+              };
+              
+              // Status flags bitfield
               uint32_t flags = 0;
-              // Bit 0: Charge enabled
               std::string ci = id(${yambms_id}_charging_instruction).state;
               if (ci == "Bulk" || ci == "Float") flags |= (1 << 0);
-              // Bit 1: Discharge enabled
               if (id(${yambms_id}_discharging_instruction).state) flags |= (1 << 1);
-              // Bit 2: Equalizing
               if (id(${yambms_id}_equalizing).state) flags |= (1 << 2);
-              // Bit 3: Force charge
               if (id(${yambms_id}_requested_force_charge).state) flags |= (1 << 3);
-              uint8_t data[4];
-              memcpy(data, &flags, 4);
-              return std::vector<uint8_t>(data, data + 4);
-        
-        # Errors bitmask alarm (uint16 sent as 4 bytes, LE)
-        # Matches YamBMS errors_bitmask format (see yambms_core.yaml)
-        - id: ble_char_errors_alarm
-          uuid: '00000402-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Errors Bitmask Alarm'
-          value:
-            data: !lambda |-
-              uint16_t alarm = (uint16_t)id(${yambms_id}_errors_bitmask_alarm).state;
-              uint8_t data[4] = {0};
-              memcpy(data, &alarm, 2);
-              return std::vector<uint8_t>(data, data + 4);
-        
-        # Errors bitmask warning (uint16 sent as 4 bytes, LE)
-        - id: ble_char_errors_warning
-          uuid: '00000403-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Errors Bitmask Warning'
-          value:
-            data: !lambda |-
-              uint16_t warning = (uint16_t)id(${yambms_id}_errors_bitmask_warning).state;
-              uint8_t data[4] = {0};
-              memcpy(data, &warning, 2);
-              return std::vector<uint8_t>(data, data + 4);
-        
-        # BMS combined count - float
-        - id: ble_char_bms_combined
-          uuid: '00000404-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'BMS Combined'
-          value:
-            data: !lambda |-
-              return bytebuffer::ByteBuffer::wrap(id(${yambms_id}_bms_combined).state).get_data();
-        
-        # Heartbeat counter (uint32)
-        - id: ble_char_heartbeat
-          uuid: '00000405-ba5e-f4ee-5ca1-eb1e5e4b1ce0'
-          read: true
-          notify: true
-          description: 'Heartbeat'
-          value:
-            data: !lambda |-
+              
+              // Errors
+              uint16_t alarm = 0, warning = 0;
+              float a = id(${yambms_id}_errors_bitmask_alarm).state;
+              float w = id(${yambms_id}_errors_bitmask_warning).state;
+              if (!std::isnan(a)) alarm = static_cast<uint16_t>(a);
+              if (!std::isnan(w)) warning = static_cast<uint16_t>(w);
+              
+              // BMS combined count
+              uint32_t combined = static_cast<uint32_t>(id(${yambms_id}_bms_combined).state);
+              
+              // Heartbeat
               static uint32_t counter = 0;
               counter++;
-              uint8_t data[4];
-              memcpy(data, &counter, 4);
-              return std::vector<uint8_t>(data, data + 4);
+              
+              std::vector<uint8_t> data;
+              data.reserve(16);
+              
+              pack_u32(data, flags);
+              pack_u16(data, alarm);
+              pack_u16(data, warning);
+              pack_u32(data, combined);
+              pack_u32(data, counter);
+              
+              return data;
 
 # +----------------------------------------------+
 # | Notify all characteristics periodically      |
 # +----------------------------------------------+
-# Triggering notify re-evaluates each value lambda and pushes fresh data
-# to any connected BLE client that has subscribed to notifications.
 interval:
   - interval: 5s
     then:
-      # Battery core
-      - ble_server.characteristic.notify: { id: ble_char_voltage }
-      - ble_server.characteristic.notify: { id: ble_char_current }
-      - ble_server.characteristic.notify: { id: ble_char_power }
-      - ble_server.characteristic.notify: { id: ble_char_soc }
-      - ble_server.characteristic.notify: { id: ble_char_soh }
-      - ble_server.characteristic.notify: { id: ble_char_capacity }
-      - ble_server.characteristic.notify: { id: ble_char_capacity_remaining }
-      - ble_server.characteristic.notify: { id: ble_char_charging_cycles }
-      # Limits
-      - ble_server.characteristic.notify: { id: ble_char_charge_voltage }
-      - ble_server.characteristic.notify: { id: ble_char_charge_current }
-      - ble_server.characteristic.notify: { id: ble_char_discharge_voltage }
-      - ble_server.characteristic.notify: { id: ble_char_discharge_current }
-      # Cell data
-      - ble_server.characteristic.notify: { id: ble_char_cell_count }
-      - ble_server.characteristic.notify: { id: ble_char_min_cell_voltage }
-      - ble_server.characteristic.notify: { id: ble_char_max_cell_voltage }
-      - ble_server.characteristic.notify: { id: ble_char_delta_cell_voltage }
-      - ble_server.characteristic.notify: { id: ble_char_min_temperature }
-      - ble_server.characteristic.notify: { id: ble_char_max_temperature }
-      # Status
-      - ble_server.characteristic.notify: { id: ble_char_status_flags }
-      - ble_server.characteristic.notify: { id: ble_char_errors_alarm }
-      - ble_server.characteristic.notify: { id: ble_char_errors_warning }
-      - ble_server.characteristic.notify: { id: ble_char_bms_combined }
-      - ble_server.characteristic.notify: { id: ble_char_heartbeat }
+      - if:
+          condition:
+            lambda: 'return id(${yambms_id}_ble_client_connected);'
+          then:
+            - ble_server.characteristic.notify: { id: ble_char_battery }
+            - ble_server.characteristic.notify: { id: ble_char_limits }
+            - ble_server.characteristic.notify: { id: ble_char_cells }
+            - ble_server.characteristic.notify: { id: ble_char_status }
