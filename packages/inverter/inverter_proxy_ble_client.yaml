@@ -66,7 +66,7 @@ ble_client:
 # +----------------------------------------------+
 binary_sensor:
   - platform: template
-    name: "${proxy_id} BLE Connected"
+    name: "BLE Connected"
     id: ${proxy_id}_ble_connected
     device_class: connectivity
 
@@ -76,19 +76,19 @@ binary_sensor:
   # Bit 2: Equalizing
   # Bit 3: Force charge requested
   - platform: template
-    name: "${proxy_id} Charge Enabled"
+    name: "Charge Enabled"
     id: ${proxy_id}_charge_enabled
 
   - platform: template
-    name: "${proxy_id} Discharge Enabled"
+    name: "Discharge Enabled"
     id: ${proxy_id}_discharge_enabled
 
   - platform: template
-    name: "${proxy_id} Equalizing"
+    name: "Equalizing"
     id: ${proxy_id}_equalizing
 
   - platform: template
-    name: "${proxy_id} Force Charge"
+    name: "Force Charge"
     id: ${proxy_id}_force_charge
 
 # +----------------------------------------------+
@@ -162,7 +162,7 @@ sensor:
 
   # Battery template sensors
   - platform: template
-    name: "${proxy_id} Voltage"
+    name: "Voltage"
     id: ${proxy_id}_voltage
     unit_of_measurement: "V"
     accuracy_decimals: 2
@@ -174,7 +174,7 @@ sensor:
         - delta: 0.01
 
   - platform: template
-    name: "${proxy_id} Current"
+    name: "Current"
     id: ${proxy_id}_current
     unit_of_measurement: "A"
     accuracy_decimals: 2
@@ -186,7 +186,7 @@ sensor:
         - delta: 0.01
 
   - platform: template
-    name: "${proxy_id} Power"
+    name: "Power"
     id: ${proxy_id}_power
     unit_of_measurement: "W"
     accuracy_decimals: 1
@@ -198,7 +198,7 @@ sensor:
         - delta: 1
 
   - platform: template
-    name: "${proxy_id} SOC"
+    name: "SOC"
     id: ${proxy_id}_soc
     unit_of_measurement: "%"
     accuracy_decimals: 0
@@ -210,7 +210,7 @@ sensor:
         - delta: 0.1
 
   - platform: template
-    name: "${proxy_id} SOH"
+    name: "SOH"
     id: ${proxy_id}_soh
     unit_of_measurement: "%"
     accuracy_decimals: 0
@@ -221,7 +221,7 @@ sensor:
         - delta: 0.1
 
   - platform: template
-    name: "${proxy_id} Capacity"
+    name: "Capacity"
     id: ${proxy_id}_capacity
     unit_of_measurement: "Ah"
     accuracy_decimals: 0
@@ -232,7 +232,7 @@ sensor:
         - delta: 0.1
 
   - platform: template
-    name: "${proxy_id} Capacity Remaining"
+    name: "Capacity Remaining"
     id: ${proxy_id}_capacity_remaining
     unit_of_measurement: "Ah"
     accuracy_decimals: 0
@@ -243,7 +243,7 @@ sensor:
         - delta: 0.1
 
   - platform: template
-    name: "${proxy_id} Charging Cycles"
+    name: "Charging Cycles"
     id: ${proxy_id}_charging_cycles
     accuracy_decimals: 0
     state_class: total_increasing
@@ -290,7 +290,7 @@ sensor:
 
   # Limits template sensors
   - platform: template
-    name: "${proxy_id} Charge Voltage CVL"
+    name: "Charge Voltage CVL"
     id: ${proxy_id}_charge_voltage
     unit_of_measurement: "V"
     accuracy_decimals: 2
@@ -302,7 +302,7 @@ sensor:
         - delta: 0.01
 
   - platform: template
-    name: "${proxy_id} Charge Current CCL"
+    name: "Charge Current CCL"
     id: ${proxy_id}_charge_current
     unit_of_measurement: "A"
     accuracy_decimals: 1
@@ -314,7 +314,7 @@ sensor:
         - delta: 0.1
 
   - platform: template
-    name: "${proxy_id} Discharge Voltage DVL"
+    name: "Discharge Voltage DVL"
     id: ${proxy_id}_discharge_voltage
     unit_of_measurement: "V"
     accuracy_decimals: 2
@@ -326,7 +326,7 @@ sensor:
         - delta: 0.01
 
   - platform: template
-    name: "${proxy_id} Discharge Current DCL"
+    name: "Discharge Current DCL"
     id: ${proxy_id}_discharge_current
     unit_of_measurement: "A"
     accuracy_decimals: 1
@@ -383,7 +383,7 @@ sensor:
 
   # Cell & temperature template sensors
   - platform: template
-    name: "${proxy_id} Cell Count"
+    name: "Cell Count"
     id: ${proxy_id}_cell_count
     accuracy_decimals: 0
     state_class: measurement
@@ -393,7 +393,7 @@ sensor:
         - delta: 1
 
   - platform: template
-    name: "${proxy_id} Min Cell Voltage"
+    name: "Min Cell Voltage"
     id: ${proxy_id}_min_cell_voltage
     unit_of_measurement: "V"
     accuracy_decimals: 3
@@ -405,7 +405,7 @@ sensor:
         - delta: 0.001
 
   - platform: template
-    name: "${proxy_id} Max Cell Voltage"
+    name: "Max Cell Voltage"
     id: ${proxy_id}_max_cell_voltage
     unit_of_measurement: "V"
     accuracy_decimals: 3
@@ -417,7 +417,7 @@ sensor:
         - delta: 0.001
 
   - platform: template
-    name: "${proxy_id} Cell Delta"
+    name: "Cell Delta"
     id: ${proxy_id}_delta_cell_voltage
     unit_of_measurement: "V"
     accuracy_decimals: 3
@@ -429,7 +429,7 @@ sensor:
         - delta: 0.001
 
   - platform: template
-    name: "${proxy_id} Min Temperature"
+    name: "Min Temperature"
     id: ${proxy_id}_min_temperature
     unit_of_measurement: "°C"
     accuracy_decimals: 1
@@ -441,7 +441,7 @@ sensor:
         - delta: 0.1
 
   - platform: template
-    name: "${proxy_id} Max Temperature"
+    name: "Max Temperature"
     id: ${proxy_id}_max_temperature
     unit_of_measurement: "°C"
     accuracy_decimals: 1
@@ -494,7 +494,7 @@ sensor:
 
   # Status template sensors
   - platform: template
-    name: "${proxy_id} Errors Alarm"
+    name: "Errors Alarm"
     id: ${proxy_id}_errors_bitmask_alarm
     accuracy_decimals: 0
     filters:
@@ -503,7 +503,7 @@ sensor:
         - delta: 1
 
   - platform: template
-    name: "${proxy_id} Errors Warning"
+    name: "Errors Warning"
     id: ${proxy_id}_errors_bitmask_warning
     accuracy_decimals: 0
     filters:
@@ -512,7 +512,7 @@ sensor:
         - delta: 1
 
   - platform: template
-    name: "${proxy_id} BMS Combined"
+    name: "BMS Combined"
     id: ${proxy_id}_bms_combined
     accuracy_decimals: 0
     filters:
@@ -521,7 +521,7 @@ sensor:
         - delta: 1
 
   - platform: template
-    name: "${proxy_id} Heartbeat"
+    name: "Heartbeat"
     id: ${proxy_id}_heartbeat
     accuracy_decimals: 0
     filters:
