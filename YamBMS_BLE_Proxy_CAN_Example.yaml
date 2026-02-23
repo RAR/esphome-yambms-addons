@@ -63,16 +63,16 @@ canbus:
 packages:
   # BLE Client - connect to YamBMS server
   ble_client:
-    url: https://github.com/RAR/esphome-yambms
-    ref: ble-inverter-proxy
+    url: https://github.com/RAR/esphome-yambms-addons
+    ref: main
     refresh: 0s
     files:
       - path: 'packages/inverter/inverter_proxy_ble_client.yaml'
 
   # CAN output to inverter
   can_output:
-    url: https://github.com/RAR/esphome-yambms
-    ref: ble-inverter-proxy
+    url: https://github.com/RAR/esphome-yambms-addons
+    ref: main
     refresh: 0s
     files:
       - path: 'packages/inverter/inverter_proxy_canbus.yaml'

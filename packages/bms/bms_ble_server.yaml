@@ -55,21 +55,21 @@ esp32_ble:
 
 globals:
   - id: bms${bms_id}_ble_client_connected
-    type: bool
+    type: int
     restore_value: no
-    initial_value: "false"
+    initial_value: "0"
 
 esp32_ble_server:
   manufacturer: "YamBMS"
   model: "BMS ${bms_id}"
   on_connect:
     - lambda: |-
-        id(bms${bms_id}_ble_client_connected) = true;
-        ESP_LOGI("ble_server", "Client connected");
+        id(bms${bms_id}_ble_client_connected)++;
+        ESP_LOGI("ble_server", "Client connected (total: %d)", id(bms${bms_id}_ble_client_connected));
   on_disconnect:
     - lambda: |-
-        id(bms${bms_id}_ble_client_connected) = false;
-        ESP_LOGI("ble_server", "Client disconnected");
+        if (id(bms${bms_id}_ble_client_connected) > 0) id(bms${bms_id}_ble_client_connected)--;
+        ESP_LOGI("ble_server", "Client disconnected (remaining: %d)", id(bms${bms_id}_ble_client_connected));
   services:
     # ==========================================
     # BMS ${bms_id} Service

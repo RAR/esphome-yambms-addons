@@ -40,21 +40,21 @@ substitutions:
 
 globals:
   - id: ${yambms_id}_ble_client_connected
-    type: bool
+    type: int
     restore_value: no
-    initial_value: "false"
+    initial_value: "0"
 
 esp32_ble_server:
   manufacturer: "YamBMS"
   model: "BLE Proxy Server"
   on_connect:
     - lambda: |-
-        id(${yambms_id}_ble_client_connected) = true;
-        ESP_LOGI("ble_server", "Client connected");
+        id(${yambms_id}_ble_client_connected)++;
+        ESP_LOGI("ble_server", "Client connected (total: %d)", id(${yambms_id}_ble_client_connected));
   on_disconnect:
     - lambda: |-
-        id(${yambms_id}_ble_client_connected) = false;
-        ESP_LOGI("ble_server", "Client disconnected");
+        if (id(${yambms_id}_ble_client_connected) > 0) id(${yambms_id}_ble_client_connected)--;
+        ESP_LOGI("ble_server", "Client disconnected (remaining: %d)", id(${yambms_id}_ble_client_connected));
 
   services:
     - uuid: ${ble_service_uuid}

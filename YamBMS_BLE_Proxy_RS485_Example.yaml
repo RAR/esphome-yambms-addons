@@ -51,8 +51,8 @@ substitutions:
 packages:
   # BLE Client - connect to YamBMS server
   ble_client:
-    url: https://github.com/RAR/esphome-yambms
-    ref: ble-inverter-proxy
+    url: https://github.com/RAR/esphome-yambms-addons
+    ref: main
     refresh: 0s
     files:
       - path: 'packages/inverter/inverter_proxy_ble_client.yaml'
@@ -61,8 +61,8 @@ packages:
   # For multiple chargers, include this block multiple times
   # with different charger_id, charger_name, and charger_uart_id
   rs485_output:
-    url: https://github.com/RAR/esphome-yambms
-    ref: ble-inverter-proxy
+    url: https://github.com/RAR/esphome-yambms-addons
+    ref: main
     refresh: 0s
     files:
       - path: 'packages/inverter/inverter_proxy_rs485.yaml'

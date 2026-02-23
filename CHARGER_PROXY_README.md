@@ -58,9 +58,8 @@ as soon as AC power is connected.
 
 | File | Purpose |
 |------|---------|
-| `ecoworthy-charger-proxy.yaml` | Main device config — board, WiFi, BLE client, charger includes |
-| `charger_rs485.yaml` | Self-contained RS485 Pylon responder (per-charger `!include`) |
-| `secrets.yaml` | WiFi credentials |
+| `packages/charger/charger_proxy_rs485.yaml` | RS485 Pylontech protocol responder (remote package, per-charger `vars:`) |
+| `YamBMS_Charger_Proxy_Example.yaml` | Example device config — board, WiFi, BLE client, charger packages |
 
 ### Dependencies
 
@@ -117,29 +116,39 @@ The overrides are available but have no practical effect on this charger model.
 
 ## Multi-Charger Support
 
-`charger_rs485.yaml` is designed for multiple chargers via `!include vars:`:
+`charger_proxy_rs485.yaml` is designed for multiple chargers via remote package `vars:`:
 
 ```yaml
 packages:
-  charger_a: !include
-    file: charger_rs485.yaml
-    vars:
-      charger_id: 'charger_a'
-      charger_name: 'Charger A'
-      charger_uart_id: 'uart_charger_a'
-      charger_tx_pin: '17'
-      charger_rx_pin: '18'
-      charger_flow_control_pin: '21'
+  # Charger A - onboard RS485
+  charger_a:
+    url: https://github.com/RAR/esphome-yambms-addons
+    ref: main
+    refresh: 0s
+    files:
+      - path: 'packages/charger/charger_proxy_rs485.yaml'
+        vars:
+          charger_id: 'charger_a'
+          charger_name: 'Charger A'
+          charger_uart_id: 'uart_charger_a'
+          charger_tx_pin: '17'
+          charger_rx_pin: '18'
+          charger_flow_control_pin: '21'
 
-  charger_b: !include
-    file: charger_rs485.yaml
-    vars:
-      charger_id: 'charger_b'
-      charger_name: 'Charger B'
-      charger_uart_id: 'uart_charger_b'
-      charger_tx_pin: '5'
-      charger_rx_pin: '6'
-      charger_flow_control_pin: '7'
+  # Charger B - external RS485 adapter
+  charger_b:
+    url: https://github.com/RAR/esphome-yambms-addons
+    ref: main
+    refresh: 0s
+    files:
+      - path: 'packages/charger/charger_proxy_rs485.yaml'
+        vars:
+          charger_id: 'charger_b'
+          charger_name: 'Charger B'
+          charger_uart_id: 'uart_charger_b'
+          charger_tx_pin: '5'
+          charger_rx_pin: '6'
+          charger_flow_control_pin: '7'
 ```
 
 Each charger gets its own UART, own HA entities, and independent charge control.
@@ -169,12 +178,12 @@ The charger sends queries, the battery responds. This is the opposite of most
 RS485 setups where the controller is the master. The ESP32 must be purely
 reactive — listen for queries and respond to each one.
 
-### 4. ESPHome `!include vars:` Doesn't Propagate to Remote Packages
+### 4. Remote Package `vars:` Work Great for Per-Instance Config
 
-Substitutions passed via `!include vars:` are only available in the directly
-included file. They don't propagate into remote packages referenced within it.
-This is why `charger_rs485.yaml` is a self-contained local file rather than
-a remote package.
+ESPHome's remote package `vars:` feature allows each charger instance to have
+its own IDs, names, and pin assignments without any local files. Each package
+block can pass different `vars:` to the same remote YAML, creating fully
+independent charger instances.
 
 ## Configuration
 
