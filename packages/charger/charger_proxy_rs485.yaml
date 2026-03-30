@@ -35,8 +35,10 @@
 # (references shared BLE client sensors).
 #
 # Supported protocols:
-#   Pylon: Pylontech RS485 V2 (0x60-0x63) for chargers/inverters
-#   JK:    JK BMS proprietary protocol for monitoring (Solar Assistant, etc.)
+#   Pylon: Pylontech RS485 V2 (0x60-0x63) for chargers/inverters (9600 baud)
+#   JK:    JK BMS proprietary RS485 protocol (115200 baud)
+#   JBD:   JBD/Overkill Solar BMS protocol (9600 baud, capacity limited to 655 Ah)
+#   Daly:  Daly BMS UART/RS485 protocol (9600 baud, recommended for monitoring)
 # Responds to queries as if it were a battery.
 
 substitutions:
@@ -71,6 +73,8 @@ select:
       - "Disabled"
       - "Pylon"
       - "JK"
+      - "JBD"
+      - "Daly"
     restore_value: true
     initial_option: "Pylon"
     optimistic: true
@@ -180,7 +184,7 @@ uart:
       dummy_receiver: true
       after:
         delimiter: "\r"
-        timeout: 2000ms
+        timeout: 20ms
       sequence:
         - lambda: |-
             if (bytes.size() > 0) {
@@ -200,11 +204,13 @@ uart:
             id(${charger_id}_rs485_last_request) = millis();
 
             // ========== JK BMS Protocol ==========
-            // Detect: NW header (4E 57) or Modbus write trigger (XX 10 16 2X)
+            // Detect: NW header (4E 57, command 0x06) — SA sends this first, expects
+            // a 55 AA EB 90 response within ~1s. The Modbus trigger that follows is
+            // a fallback and is ignored.
             bool is_jk_nw = (bytes.size() >= 11 && bytes[0] == 0x4E && bytes[1] == 0x57);
             bool is_jk_modbus = (bytes.size() >= 11 && bytes[1] == 0x10 && bytes[2] == 0x16);
             if (proto == 2 && (is_jk_nw || is_jk_modbus)) {
-              ESP_LOGD("proxy_jk", "JK request detected (%s, %d bytes)",
+              ESP_LOGD("proxy_jk", "JK %s request (%d bytes)",
                 is_jk_nw ? "NW" : "Modbus", bytes.size());
 
               float voltage = id(${proxy_id}_voltage).state;
@@ -233,8 +239,10 @@ uart:
               if (std::isnan(cap_remain)) cap_remain = 0;
               if (std::isnan(cap_total)) cap_total = 0;
 
-              // Build 308-byte JK Type 02 response frame
-              uint8_t frame[308];
+              // Build 300-byte JK RS485 old protocol response (55 AA EB 90)
+              // Real frame is exactly 300 bytes: 4-byte header + 295 payload + 1 checksum
+              // Bytes 300-307 in captures are a separate Modbus ACK, NOT part of this frame.
+              uint8_t frame[300];
               memset(frame, 0, sizeof(frame));
 
               // Header: 55 AA EB 90
@@ -244,7 +252,7 @@ uart:
               uint8_t *p = &frame[4];
 
               p[0] = 0x02;  // Record type: Cell data
-              p[1] = id(${charger_id}_jk_frame_counter)++;
+              p[1] = 0x00;  // BMS address (matches real JK captures)
 
               // Cell voltages (payload offset 2-33): 16 cells × 2 bytes LE
               uint32_t v_mv = (uint32_t)(voltage * 1000);
@@ -323,15 +331,350 @@ uart:
               // Discharge MOSFET (payload offset 195): u8
               p[195] = id(${proxy_id}_discharge_enabled).state ? 1 : 0;
 
-              // Checksum: sum of bytes 0-298, stored at byte 299
-              uint8_t cksum = 0;
-              for (int i = 0; i < 299; i++) cksum += frame[i];
-              frame[299] = cksum;
+              // Temp 3-5 (payload offsets 250, 252, 254)
+              int16_t tavg = (int16_t)((min_temp + max_temp) / 2.0f * 10);
+              p[250] = tavg & 0xFF; p[251] = (tavg >> 8) & 0xFF;
+              p[252] = tavg & 0xFF; p[253] = (tavg >> 8) & 0xFF;
+              p[254] = tavg & 0xFF; p[255] = (tavg >> 8) & 0xFF;
 
-              // Send frame
-              id(${charger_uart_id}).write_array(frame, sizeof(frame));
+              // Checksum at frame[299]: sum of bytes 0-298, low byte
+              uint16_t cksum = 0;
+              for (int i = 0; i < 299; i++) cksum += frame[i];
+              frame[299] = (uint8_t)(cksum & 0xFF);
+
+              ESP_LOGD("proxy_jk", "RS485 frame: 300 bytes, cksum=0x%02X", frame[299]);
+
+              // Send exactly 300 bytes
+              id(${charger_uart_id}).write_array(frame, 300);
               ESP_LOGI("proxy_jk", "Sent JK Type02: V=%.1fV I=%.1fA SOC=%u%% SOH=%.0f%%",
                 voltage, current, (unsigned)p[169], soh_val);
+              return;
+            }
+
+            // ========== JBD (Overkill Solar) Protocol ==========
+            // Detect: DD A5 03 (basic info) or DD A5 04 (cell voltages)
+            // Protocol index 3 = "JBD"
+            if (proto == 3 && bytes.size() >= 7 && bytes[0] == 0xDD && bytes[1] == 0xA5) {
+              uint8_t reg = bytes[2];
+              ESP_LOGD("proxy_jbd", "JBD request reg=0x%02X (%d bytes)", reg, bytes.size());
+
+              float voltage = id(${proxy_id}_voltage).state;
+              float current = id(${proxy_id}_current).state;
+              float soc_val = id(${proxy_id}_soc).state;
+              if (std::isnan(voltage) || std::isnan(current) || std::isnan(soc_val)) {
+                ESP_LOGW("proxy_jbd", "BLE data not ready, skipping");
+                return;
+              }
+
+              // JBD response: DD [reg] [status=00] [len] [data...] [cksum_hi] [cksum_lo] 77
+              auto send_jbd = [&](uint8_t cmd, const uint8_t *data, uint8_t data_len) {
+                uint8_t resp[128];
+                int ri = 0;
+                resp[ri++] = 0xDD;
+                resp[ri++] = cmd;
+                resp[ri++] = 0x00;  // status OK
+                resp[ri++] = data_len;
+                memcpy(&resp[ri], data, data_len);
+                ri += data_len;
+                // Checksum: 0x10000 - sum(bytes[2..ri-1]) = ~sum+1
+                uint16_t sum = 0;
+                for (int i = 2; i < ri; i++) sum += resp[i];
+                uint16_t cksum = (~sum + 1) & 0xFFFF;
+                resp[ri++] = (cksum >> 8) & 0xFF;
+                resp[ri++] = cksum & 0xFF;
+                resp[ri++] = 0x77;
+                id(${charger_uart_id}).write_array(resp, ri);
+              };
+
+              if (reg == 0x03) {
+                // Basic info response
+                float soh_val = id(${proxy_id}_soh).state;
+                float cyc_val = id(${proxy_id}_charging_cycles).state;
+                float cap_remain = id(${proxy_id}_capacity_remaining).state;
+                float cap_total = id(${proxy_id}_capacity).state;
+                float max_temp = id(${proxy_id}_max_temperature).state;
+                float min_temp = id(${proxy_id}_min_temperature).state;
+
+                if (std::isnan(soh_val)) soh_val = 100.0f;
+                if (std::isnan(cyc_val)) cyc_val = 0;
+                if (std::isnan(cap_remain)) cap_remain = 0;
+                if (std::isnan(cap_total)) cap_total = 0;
+                if (std::isnan(max_temp)) max_temp = 25.0f;
+                if (std::isnan(min_temp)) min_temp = max_temp;
+
+                uint8_t data[27];
+                memset(data, 0, sizeof(data));
+
+                // [0-1] Total voltage: uint16 BE, 10mV units
+                uint16_t v_10mv = (uint16_t)(voltage * 100);
+                data[0] = (v_10mv >> 8) & 0xFF; data[1] = v_10mv & 0xFF;
+
+                // [2-3] Current: int16 BE, 10mA units (positive=charge in JBD)
+                int16_t i_10ma = (int16_t)(current * 100);
+                data[2] = (i_10ma >> 8) & 0xFF; data[3] = i_10ma & 0xFF;
+
+                // [4-5] Remaining capacity, [6-7] Nominal capacity: uint16 BE, 10mAh
+                // uint16 max = 65535 (655 Ah). Scale proportionally for large packs
+                // so the ratio (and thus SA's calculated SOC) is preserved.
+                uint32_t rem_raw = (uint32_t)(cap_remain * 100);
+                uint32_t nom_raw = (uint32_t)(cap_total * 100);
+                uint32_t max_val = rem_raw > nom_raw ? rem_raw : nom_raw;
+                if (max_val > 65535) {
+                  float scale = 65535.0f / max_val;
+                  rem_raw = (uint32_t)(rem_raw * scale);
+                  nom_raw = (uint32_t)(nom_raw * scale);
+                }
+                data[4] = (rem_raw >> 8) & 0xFF; data[5] = rem_raw & 0xFF;
+                data[6] = (nom_raw >> 8) & 0xFF; data[7] = nom_raw & 0xFF;
+
+                // [8-9] Cycle count: uint16 BE
+                uint16_t cyc = (uint16_t)cyc_val;
+                data[8] = (cyc >> 8) & 0xFF; data[9] = cyc & 0xFF;
+
+                // [10-11] Production date (packed, set to 2024-01-01)
+                data[10] = 0x2C; data[11] = 0x21;
+
+                // [12-15] Balance status (uint32 BE, bit per cell) — all zeros = no balancing
+                // [16-17] Protection status (uint16 BE bitmask)
+                uint16_t alarms = 0;
+                if (!std::isnan(id(${proxy_id}_errors_bitmask_alarm).state))
+                  alarms = (uint16_t)id(${proxy_id}_errors_bitmask_alarm).state;
+                data[16] = (alarms >> 8) & 0xFF; data[17] = alarms & 0xFF;
+
+                // [18] Software version
+                data[18] = 0x10;  // v1.0
+
+                // [19] SOC %
+                data[19] = (uint8_t)soc_val;
+
+                // [20] FET status: bit0=charge, bit1=discharge
+                uint8_t fet = 0;
+                if (id(${proxy_id}_charge_enabled).state) fet |= 0x01;
+                if (id(${proxy_id}_discharge_enabled).state) fet |= 0x02;
+                data[20] = fet;
+
+                // [21] Number of cells
+                data[21] = 16;
+
+                // [22] Number of NTC sensors
+                data[22] = 2;
+
+                // [23-24] NTC 1: uint16 BE, Kelvin × 10 (e.g. 2981 = 25.1°C)
+                uint16_t ntc1 = (uint16_t)((min_temp + 273.15f) * 10);
+                data[23] = (ntc1 >> 8) & 0xFF; data[24] = ntc1 & 0xFF;
+
+                // [25-26] NTC 2: uint16 BE
+                uint16_t ntc2 = (uint16_t)((max_temp + 273.15f) * 10);
+                data[25] = (ntc2 >> 8) & 0xFF; data[26] = ntc2 & 0xFF;
+
+                send_jbd(0x03, data, 27);
+                ESP_LOGI("proxy_jbd", "Sent 0x03 Basic: V=%.1fV I=%.1fA SOC=%u%% FET=0x%02X",
+                  voltage, current, data[19], fet);
+              }
+              else if (reg == 0x04) {
+                // Cell voltages response: 16 cells × 2 bytes BE (mV)
+                float max_cell = id(${proxy_id}_max_cell_voltage).state;
+                float min_cell = id(${proxy_id}_min_cell_voltage).state;
+                if (std::isnan(max_cell)) max_cell = voltage / 16.0f;
+                if (std::isnan(min_cell)) min_cell = max_cell;
+
+                uint16_t avg_mv = (uint16_t)(voltage * 1000 / 16);
+                uint16_t min_mv = (uint16_t)(min_cell * 1000);
+                uint16_t max_mv = (uint16_t)(max_cell * 1000);
+
+                uint8_t data[32];  // 16 cells × 2 bytes
+                for (int c = 0; c < 16; c++) {
+                  uint16_t cv = avg_mv;
+                  if (c == 0) cv = min_mv;
+                  if (c == 15) cv = max_mv;
+                  data[c*2] = (cv >> 8) & 0xFF;
+                  data[c*2 + 1] = cv & 0xFF;
+                }
+                send_jbd(0x04, data, 32);
+                ESP_LOGI("proxy_jbd", "Sent 0x04 Cells: min=%umV avg=%umV max=%umV",
+                  min_mv, avg_mv, max_mv);
+              }
+              else {
+                ESP_LOGD("proxy_jbd", "Unknown JBD register: 0x%02X", reg);
+              }
+              return;
+            }
+
+            // ========== Daly BMS Protocol ==========
+            // Detect: A5 40 [CMD] 08 ... (13-byte fixed frames, 9600 baud)
+            // Protocol index 4 = "Daly"
+            if (proto == 4 && bytes.size() >= 13) {
+              // Process ALL Daly frames in buffer — SA retries rapidly and
+              // the UART debug delivers them as one chunk
+              int last_cmd = -1;
+              for (int pos = 0; pos + 12 < bytes.size(); pos++) {
+                if (bytes[pos] != 0xA5 || bytes[pos+1] != 0x40 || bytes[pos+3] != 0x08) continue;
+                last_cmd = bytes[pos+2];
+                pos += 12;  // skip to end of this 13-byte frame
+              }
+              if (last_cmd < 0) return;  // not a Daly frame
+              // Respond to the last command seen (most likely to be in SA's receive window)
+              uint8_t cmd = (uint8_t)last_cmd;
+              ESP_LOGD("proxy_daly", "Daly request cmd=0x%02X (%d bytes in buffer)", cmd, bytes.size());
+
+              float voltage = id(${proxy_id}_voltage).state;
+              float current = id(${proxy_id}_current).state;
+              float soc_val = id(${proxy_id}_soc).state;
+              if (std::isnan(voltage) || std::isnan(current) || std::isnan(soc_val)) {
+                ESP_LOGW("proxy_daly", "BLE data not ready");
+                return;
+              }
+
+              // Daly response: A5 01 [CMD] 08 [8 data bytes] [checksum]
+              auto send_daly = [&](uint8_t cmd, const uint8_t data[8]) {
+                uint8_t resp[13];
+                resp[0] = 0xA5;
+                resp[1] = 0x01;  // BMS address
+                resp[2] = cmd;
+                resp[3] = 0x08;
+                memcpy(&resp[4], data, 8);
+                uint8_t cksum = 0;
+                for (int i = 0; i < 12; i++) cksum += resp[i];
+                resp[12] = cksum;
+                id(${charger_uart_id}).write_array(resp, 13);
+              };
+
+              uint8_t d[8];
+              memset(d, 0, 8);
+
+              // 0x90: Voltage, Current, SOC
+              if (cmd == 0x90) {
+                uint16_t v_raw = (uint16_t)(voltage * 10);  // 0.1V
+                d[0] = (v_raw >> 8) & 0xFF; d[1] = v_raw & 0xFF;
+                d[2] = d[0]; d[3] = d[1];  // gather voltage = pack voltage
+                // Current: 30000 = 0A, >30000 = discharge, <30000 = charge
+                // YamBMS: positive = charge, negative = discharge
+                // SA displays >30000 as positive, so flip sign to match
+                uint16_t i_raw = (uint16_t)(30000 + (int16_t)(current * 10));
+                d[4] = (i_raw >> 8) & 0xFF; d[5] = i_raw & 0xFF;
+                uint16_t soc_raw = (uint16_t)(soc_val * 10);  // 0.1%
+                d[6] = (soc_raw >> 8) & 0xFF; d[7] = soc_raw & 0xFF;
+                send_daly(0x90, d);
+                ESP_LOGI("proxy_daly", "0x90: V=%.1fV I=%.1fA SOC=%.1f%%", voltage, current, soc_val);
+              }
+              // 0x91: Min/Max cell voltage
+              else if (cmd == 0x91) {
+                float max_cell = id(${proxy_id}_max_cell_voltage).state;
+                float min_cell = id(${proxy_id}_min_cell_voltage).state;
+                if (std::isnan(max_cell)) max_cell = voltage / 16.0f;
+                if (std::isnan(min_cell)) min_cell = max_cell;
+                uint16_t max_mv = (uint16_t)(max_cell * 1000);
+                uint16_t min_mv = (uint16_t)(min_cell * 1000);
+                d[0] = (max_mv >> 8) & 0xFF; d[1] = max_mv & 0xFF;
+                d[2] = 16;  // cell number with max
+                d[3] = (min_mv >> 8) & 0xFF; d[4] = min_mv & 0xFF;
+                d[5] = 1;   // cell number with min
+                send_daly(0x91, d);
+                ESP_LOGD("proxy_daly", "0x91: max=%umV min=%umV", max_mv, min_mv);
+              }
+              // 0x92: Min/Max temperature
+              else if (cmd == 0x92) {
+                float max_temp = id(${proxy_id}_max_temperature).state;
+                float min_temp = id(${proxy_id}_min_temperature).state;
+                if (std::isnan(max_temp)) max_temp = 25.0f;
+                if (std::isnan(min_temp)) min_temp = max_temp;
+                d[0] = (uint8_t)(max_temp + 40);  // +40 offset
+                d[1] = 1;  // sensor number
+                d[2] = (uint8_t)(min_temp + 40);
+                d[3] = 2;
+                send_daly(0x92, d);
+                ESP_LOGD("proxy_daly", "0x92: max=%.1f min=%.1f", max_temp, min_temp);
+              }
+              // 0x93: MOS status + remaining capacity (uint32 mAh)
+              else if (cmd == 0x93) {
+                float cap_remain = id(${proxy_id}_capacity_remaining).state;
+                if (std::isnan(cap_remain)) cap_remain = 0;
+                // Status: 0=stationary, 1=charging, 2=discharging
+                if (current > 0.5f) d[0] = 1;
+                else if (current < -0.5f) d[0] = 2;
+                else d[0] = 0;
+                d[1] = id(${proxy_id}_charge_enabled).state ? 1 : 0;
+                d[2] = id(${proxy_id}_discharge_enabled).state ? 1 : 0;
+                d[3] = id(${charger_id}_jk_frame_counter)++;  // heartbeat
+                // Remaining capacity: uint32 BE, mAh
+                uint32_t rem_mah = (uint32_t)(cap_remain * 1000);
+                d[4] = (rem_mah >> 24) & 0xFF;
+                d[5] = (rem_mah >> 16) & 0xFF;
+                d[6] = (rem_mah >> 8) & 0xFF;
+                d[7] = rem_mah & 0xFF;
+                send_daly(0x93, d);
+                ESP_LOGI("proxy_daly", "0x93: status=%u rem=%.0fAh", d[0], cap_remain);
+              }
+              // 0x94: Battery status / cell count
+              else if (cmd == 0x94) {
+                float cyc_val = id(${proxy_id}_charging_cycles).state;
+                if (std::isnan(cyc_val)) cyc_val = 0;
+                d[0] = 16;  // cell count
+                d[1] = 2;   // temp sensor count
+                d[2] = (current > 0.5f) ? 1 : 0;  // charger running
+                d[3] = (current < -0.5f) ? 1 : 0;  // load running
+                uint16_t cyc = (uint16_t)cyc_val;
+                d[5] = (cyc >> 8) & 0xFF; d[6] = cyc & 0xFF;
+                send_daly(0x94, d);
+                ESP_LOGD("proxy_daly", "0x94: cells=16 temps=2 cycles=%u", cyc);
+              }
+              // 0x95: Cell voltages (multi-frame, 3 cells per frame)
+              else if (cmd == 0x95) {
+                float max_cell = id(${proxy_id}_max_cell_voltage).state;
+                float min_cell = id(${proxy_id}_min_cell_voltage).state;
+                if (std::isnan(max_cell)) max_cell = voltage / 16.0f;
+                if (std::isnan(min_cell)) min_cell = max_cell;
+                uint16_t avg_mv = (uint16_t)(voltage * 1000 / 16);
+                uint16_t min_mv = (uint16_t)(min_cell * 1000);
+                uint16_t max_mv = (uint16_t)(max_cell * 1000);
+                // 16 cells = 6 frames (ceil(16/3))
+                for (int f = 0; f < 6; f++) {
+                  memset(d, 0, 8);
+                  d[0] = f + 1;  // frame number (1-indexed)
+                  for (int s = 0; s < 3; s++) {
+                    int cell = f * 3 + s;
+                    if (cell >= 16) break;
+                    uint16_t cv = avg_mv;
+                    if (cell == 0) cv = min_mv;
+                    if (cell == 15) cv = max_mv;
+                    d[1 + s*2] = (cv >> 8) & 0xFF;
+                    d[2 + s*2] = cv & 0xFF;
+                  }
+                  send_daly(0x95, d);
+                }
+                ESP_LOGD("proxy_daly", "0x95: sent 6 cell voltage frames");
+              }
+              // 0x96: Cell temperatures (multi-frame, 7 temps per frame)
+              else if (cmd == 0x96) {
+                float max_temp = id(${proxy_id}_max_temperature).state;
+                float min_temp = id(${proxy_id}_min_temperature).state;
+                if (std::isnan(max_temp)) max_temp = 25.0f;
+                if (std::isnan(min_temp)) min_temp = max_temp;
+                memset(d, 0, 8);
+                d[0] = 1;  // frame 1
+                d[1] = (uint8_t)(min_temp + 40);
+                d[2] = (uint8_t)(max_temp + 40);
+                send_daly(0x96, d);
+                ESP_LOGD("proxy_daly", "0x96: sent temp frame");
+              }
+              // 0x97: Balance state
+              else if (cmd == 0x97) {
+                // All zeros = no balancing (or set bits if equalizing)
+                send_daly(0x97, d);
+              }
+              // 0x98: Alarms
+              else if (cmd == 0x98) {
+                uint16_t alarms = 0;
+                if (!std::isnan(id(${proxy_id}_errors_bitmask_alarm).state))
+                  alarms = (uint16_t)id(${proxy_id}_errors_bitmask_alarm).state;
+                d[0] = alarms & 0xFF;        // voltage alarms
+                d[1] = (alarms >> 8) & 0xFF;  // temp alarms
+                send_daly(0x98, d);
+                ESP_LOGD("proxy_daly", "0x98: alarms=0x%04X", alarms);
+              }
+              else {
+                ESP_LOGD("proxy_daly", "Unknown Daly cmd: 0x%02X", cmd);
+              }
               return;
             }
 

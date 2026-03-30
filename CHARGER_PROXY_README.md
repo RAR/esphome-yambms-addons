@@ -158,11 +158,13 @@ and pin header (GPIO5/6) for a second RS485 adapter.
 ## Solar Assistant / Monitoring-Only Mode
 
 The charger proxy can also be used for **monitoring-only** applications like
-[Solar Assistant](https://solar-assistant.io/), which reads battery data via
-Pylontech RS485 protocol.
+[Solar Assistant](https://solar-assistant.io/). Multiple battery protocols are
+supported — select the protocol via the RS485 Protocol entity in Home Assistant.
 
-Set `charger_charge_control` to `'false'` and `charger_baud_rate` to match your
-monitoring system (Solar Assistant uses 115200 baud):
+### Recommended: Daly Protocol (for Solar Assistant)
+
+Daly protocol works with SA's "USB Daly UART/RS485" option and supports large
+battery packs (uint32 capacity). Uses 9600 baud.
 
 ```yaml
 packages:
@@ -179,9 +181,20 @@ packages:
           charger_tx_pin: '7'
           charger_rx_pin: '8'
           charger_flow_control_pin: '21'
-          charger_baud_rate: '115200'
           charger_charge_control: 'false'
 ```
+
+Then set the RS485 Protocol entity to "Daly" in Home Assistant and configure
+Solar Assistant for "USB Daly UART/RS485".
+
+### Alternative Protocols
+
+| Protocol | SA Option | Baud Rate | Capacity Limit | Notes |
+|----------|-----------|-----------|----------------|-------|
+| Daly | USB Daly UART/RS485 | 9600 | Unlimited | Recommended |
+| JBD | USB JBD UART/RS485 | 9600 | 655 Ah | Simple, limited capacity |
+| JK | USB JK RS485 | 115200 | N/A | Experimental |
+| Pylon | N/A (charger use) | 9600 | N/A | For chargers, not monitoring |
 
 When `charger_charge_control` is `'false'`:
 - Charge Enable switch, CVL/CCL overrides, Charge Mode, and Sent CVL/CCL entities are hidden
