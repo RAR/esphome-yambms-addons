@@ -32,7 +32,7 @@ Proxies inverter CAN bus or RS485 communication over BLE, allowing the inverter-
 
 ### Charger Proxy
 
-Controls chargers that speak the Pylontech RS485 battery protocol by spoofing battery responses. The proxy receives real battery data from YamBMS over BLE and responds to charger RS485 queries (0x60–0x63) as if it were a Pylontech battery. Supports multiple chargers on separate UARTs with independent charge control.
+Controls chargers that speak the Pylontech RS485 battery protocol by spoofing battery responses. The proxy receives real battery data from YamBMS over BLE and responds to charger RS485 queries (0x60–0x63) as if it were a Pylontech battery. Supports multiple chargers on separate UARTs with independent charge control. Also supports monitoring-only mode (e.g., Solar Assistant) with configurable baud rate and no charge spoofing.
 
 See [CHARGER_PROXY_README.md](CHARGER_PROXY_README.md) for full documentation, hardware details, and protocol notes.
 

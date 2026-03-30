@@ -155,6 +155,40 @@ Each charger gets its own UART, own HA entities, and independent charge control.
 The Waveshare board has additional UART pins on the SH1.0 connector (GPIO1/2)
 and pin header (GPIO5/6) for a second RS485 adapter.
 
+## Solar Assistant / Monitoring-Only Mode
+
+The charger proxy can also be used for **monitoring-only** applications like
+[Solar Assistant](https://solar-assistant.io/), which reads battery data via
+Pylontech RS485 protocol.
+
+Set `charger_charge_control` to `'false'` and `charger_baud_rate` to match your
+monitoring system (Solar Assistant uses 115200 baud):
+
+```yaml
+packages:
+  solar_assistant:
+    url: https://github.com/RAR/esphome-yambms-addons
+    ref: main
+    refresh: 0s
+    files:
+      - path: 'packages/charger/charger_proxy_rs485.yaml'
+        vars:
+          charger_id: 'solar_assistant'
+          charger_name: 'Solar Assistant'
+          charger_uart_id: 'uart_solar_assistant'
+          charger_tx_pin: '7'
+          charger_rx_pin: '8'
+          charger_flow_control_pin: '21'
+          charger_baud_rate: '115200'
+          charger_charge_control: 'false'
+```
+
+When `charger_charge_control` is `'false'`:
+- Charge Enable switch, CVL/CCL overrides, Charge Mode, and Sent CVL/CCL entities are hidden
+- Battery data is always reported accurately (no SOC/CVL/CCL spoofing)
+- RS485 Protocol selector, RS485 Status, and RS485 Heartbeat remain visible for diagnostics
+- Charge Mode (internal) shows "Monitoring"
+
 ## Critical Lessons Learned
 
 ### 1. RS485 Transceivers Need Explicit DE/RE Control
