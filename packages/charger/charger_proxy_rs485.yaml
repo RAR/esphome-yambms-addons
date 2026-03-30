@@ -47,23 +47,15 @@ globals:
     restore_value: no
     initial_value: "0"
 
-<% if charger_charge_control == 'true' %>
 switch:
   - platform: template
-    name: "${charger_name} Charge Enable"
+    name: "${ charger_name + ' Charge Enable' if charger_charge_control == 'true' else '' }"
     id: ${charger_id}_charge_enable
-    icon: "mdi:battery-charging"
+    icon: "${ 'mdi:battery-charging' if charger_charge_control == 'true' else '' }"
+    internal: "${ 'false' if charger_charge_control == 'true' else 'true' }"
     optimistic: true
-    restore_mode: RESTORE_DEFAULT_ON
-    entity_category: config
-<% else %>
-switch:
-  - platform: template
-    id: ${charger_id}_charge_enable
-    internal: true
-    optimistic: true
-    restore_mode: ALWAYS_ON
-<% endif %>
+    restore_mode: "${ 'RESTORE_DEFAULT_ON' if charger_charge_control == 'true' else 'ALWAYS_ON' }"
+    entity_category: "${ 'config' if charger_charge_control == 'true' else '' }"
 
 select:
   - platform: template
@@ -90,46 +82,32 @@ sensor:
     unit_of_measurement: "s"
     accuracy_decimals: 0
     entity_category: diagnostic
-<% if charger_charge_control == 'true' %>
   - platform: template
     id: ${charger_id}_sent_cvl
-    name: "${charger_name} Sent CVL"
+    name: "${ charger_name + ' Sent CVL' if charger_charge_control == 'true' else '' }"
     unit_of_measurement: "V"
     accuracy_decimals: 1
     icon: "mdi:flash"
+    internal: "${ 'false' if charger_charge_control == 'true' else 'true' }"
   - platform: template
     id: ${charger_id}_sent_ccl
-    name: "${charger_name} Sent CCL"
+    name: "${ charger_name + ' Sent CCL' if charger_charge_control == 'true' else '' }"
     unit_of_measurement: "A"
     accuracy_decimals: 1
     icon: "mdi:current-dc"
-<% else %>
-  - platform: template
-    id: ${charger_id}_sent_cvl
-    internal: true
-  - platform: template
-    id: ${charger_id}_sent_ccl
-    internal: true
-<% endif %>
+    internal: "${ 'false' if charger_charge_control == 'true' else 'true' }"
 
-<% if charger_charge_control == 'true' %>
 text_sensor:
   - platform: template
     id: ${charger_id}_charge_mode
-    name: "${charger_name} Charge Mode"
+    name: "${ charger_name + ' Charge Mode' if charger_charge_control == 'true' else '' }"
     icon: "mdi:information-outline"
-    entity_category: diagnostic
-<% else %>
-text_sensor:
-  - platform: template
-    id: ${charger_id}_charge_mode
-    internal: true
-<% endif %>
+    entity_category: "${ 'diagnostic' if charger_charge_control == 'true' else '' }"
+    internal: "${ 'false' if charger_charge_control == 'true' else 'true' }"
 
-<% if charger_charge_control == 'true' %>
 number:
   - platform: template
-    name: "${charger_name} CVL Override"
+    name: "${ charger_name + ' CVL Override' if charger_charge_control == 'true' else '' }"
     id: ${charger_id}_cvl_override
     icon: "mdi:flash"
     unit_of_measurement: "V"
@@ -139,10 +117,11 @@ number:
     initial_value: 0
     restore_value: true
     optimistic: true
-    entity_category: config
+    entity_category: "${ 'config' if charger_charge_control == 'true' else '' }"
+    internal: "${ 'false' if charger_charge_control == 'true' else 'true' }"
     mode: box
   - platform: template
-    name: "${charger_name} CCL Override"
+    name: "${ charger_name + ' CCL Override' if charger_charge_control == 'true' else '' }"
     id: ${charger_id}_ccl_override
     icon: "mdi:current-dc"
     unit_of_measurement: "A"
@@ -152,27 +131,9 @@ number:
     initial_value: 0
     restore_value: true
     optimistic: true
-    entity_category: config
+    entity_category: "${ 'config' if charger_charge_control == 'true' else '' }"
+    internal: "${ 'false' if charger_charge_control == 'true' else 'true' }"
     mode: box
-<% else %>
-number:
-  - platform: template
-    id: ${charger_id}_cvl_override
-    internal: true
-    min_value: 0
-    max_value: 58
-    step: 0.1
-    initial_value: 0
-    optimistic: true
-  - platform: template
-    id: ${charger_id}_ccl_override
-    internal: true
-    min_value: 0
-    max_value: 300
-    step: 1
-    initial_value: 0
-    optimistic: true
-<% endif %>
 
 interval:
   - interval: 1s
