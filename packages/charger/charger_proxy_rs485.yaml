@@ -34,8 +34,10 @@
 # Also requires ${proxy_id} from top-level substitutions
 # (references shared BLE client sensors).
 #
-# Full Pylontech RS485 protocol emulator (0x60-0x63).
-# Responds to charger queries as if it were a Pylontech battery.
+# Supported protocols:
+#   Pylon: Pylontech RS485 V2 (0x60-0x63) for chargers/inverters
+#   JK:    JK BMS proprietary protocol for monitoring (Solar Assistant, etc.)
+# Responds to queries as if it were a battery.
 
 substitutions:
   charger_baud_rate: '9600'
@@ -44,6 +46,10 @@ substitutions:
 globals:
   - id: ${charger_id}_rs485_last_request
     type: uint32_t
+    restore_value: no
+    initial_value: "0"
+  - id: ${charger_id}_jk_frame_counter
+    type: uint8_t
     restore_value: no
     initial_value: "0"
 
@@ -64,6 +70,7 @@ select:
     options:
       - "Disabled"
       - "Pylon"
+      - "JK"
     restore_value: true
     initial_option: "Pylon"
     optimistic: true
@@ -182,7 +189,9 @@ uart:
               ESP_LOGD("rs485_rx", "[${charger_id}] %d bytes: %s", bytes.size(), ascii.c_str());
             }
 
-            if (id(${charger_id}_rs485_protocol).active_index() == 0) return;
+            // Protocol index: 0=Disabled, 1=Pylon, 2=JK
+            int proto = id(${charger_id}_rs485_protocol).active_index().value_or(0);
+            if (proto == 0) return;
             if (!id(${proxy_id}_ble_connected).state) {
               ESP_LOGW("rs485_rx", "[${charger_id}] BLE not connected, ignoring request");
               return;
@@ -190,6 +199,139 @@ uart:
 
             id(${charger_id}_rs485_last_request) = millis();
 
+            // ========== JK BMS Protocol ==========
+            // Detect: NW header (4E 57) or Modbus write trigger (XX 10 16 2X)
+            bool is_jk_nw = (bytes.size() >= 11 && bytes[0] == 0x4E && bytes[1] == 0x57);
+            bool is_jk_modbus = (bytes.size() >= 11 && bytes[1] == 0x10 && bytes[2] == 0x16);
+            if (proto == 2 && (is_jk_nw || is_jk_modbus)) {
+              ESP_LOGD("proxy_jk", "JK request detected (%s, %d bytes)",
+                is_jk_nw ? "NW" : "Modbus", bytes.size());
+
+              float voltage = id(${proxy_id}_voltage).state;
+              float current = id(${proxy_id}_current).state;
+              float soc_val = id(${proxy_id}_soc).state;
+              if (std::isnan(voltage) || std::isnan(current) || std::isnan(soc_val)) {
+                ESP_LOGW("proxy_jk", "BLE data not ready, skipping");
+                return;
+              }
+
+              float soh_val = id(${proxy_id}_soh).state;
+              float cyc_val = id(${proxy_id}_charging_cycles).state;
+              float max_cell = id(${proxy_id}_max_cell_voltage).state;
+              float min_cell = id(${proxy_id}_min_cell_voltage).state;
+              float max_temp = id(${proxy_id}_max_temperature).state;
+              float min_temp = id(${proxy_id}_min_temperature).state;
+              float cap_remain = id(${proxy_id}_capacity_remaining).state;
+              float cap_total = id(${proxy_id}_capacity).state;
+
+              if (std::isnan(soh_val)) soh_val = 100.0f;
+              if (std::isnan(cyc_val)) cyc_val = 0;
+              if (std::isnan(max_cell)) max_cell = voltage / 16.0f;
+              if (std::isnan(min_cell)) min_cell = max_cell;
+              if (std::isnan(max_temp)) max_temp = 25.0f;
+              if (std::isnan(min_temp)) min_temp = max_temp;
+              if (std::isnan(cap_remain)) cap_remain = 0;
+              if (std::isnan(cap_total)) cap_total = 0;
+
+              // Build 308-byte JK Type 02 response frame
+              uint8_t frame[308];
+              memset(frame, 0, sizeof(frame));
+
+              // Header: 55 AA EB 90
+              frame[0] = 0x55; frame[1] = 0xAA; frame[2] = 0xEB; frame[3] = 0x90;
+
+              // Payload starts at frame[4], offsets below are payload-relative
+              uint8_t *p = &frame[4];
+
+              p[0] = 0x02;  // Record type: Cell data
+              p[1] = id(${charger_id}_jk_frame_counter)++;
+
+              // Cell voltages (payload offset 2-33): 16 cells × 2 bytes LE
+              uint32_t v_mv = (uint32_t)(voltage * 1000);
+              uint16_t min_mv = (uint16_t)(min_cell * 1000);
+              uint16_t max_mv = (uint16_t)(max_cell * 1000);
+              uint16_t avg_mv = (uint16_t)(v_mv / 16);
+              // Cell 1 = min, cell 16 = max, cells 2-15 = avg
+              p[2] = min_mv & 0xFF; p[3] = (min_mv >> 8) & 0xFF;
+              for (int i = 1; i < 15; i++) {
+                p[2 + i*2] = avg_mv & 0xFF;
+                p[2 + i*2 + 1] = (avg_mv >> 8) & 0xFF;
+              }
+              p[32] = max_mv & 0xFF; p[33] = (max_mv >> 8) & 0xFF;
+
+              // Total voltage (payload offset 146): u32 LE, mV
+              p[146] = v_mv & 0xFF;
+              p[147] = (v_mv >> 8) & 0xFF;
+              p[148] = (v_mv >> 16) & 0xFF;
+              p[149] = (v_mv >> 24) & 0xFF;
+
+              // Current (payload offset 154): i32 LE, mA
+              int32_t i_ma = (int32_t)(current * 1000);
+              p[154] = i_ma & 0xFF;
+              p[155] = (i_ma >> 8) & 0xFF;
+              p[156] = (i_ma >> 16) & 0xFF;
+              p[157] = (i_ma >> 24) & 0xFF;
+
+              // Temp sensor 1 (payload offset 158): i16 LE, 0.1°C
+              int16_t t1 = (int16_t)(min_temp * 10);
+              p[158] = t1 & 0xFF; p[159] = (t1 >> 8) & 0xFF;
+              // Temp sensor 2 (payload offset 160): i16 LE, 0.1°C
+              int16_t t2 = (int16_t)(max_temp * 10);
+              p[160] = t2 & 0xFF; p[161] = (t2 >> 8) & 0xFF;
+
+              // Alarms (payload offset 162-164): 24-bit LE
+              uint16_t alarms = 0;
+              if (!std::isnan(id(${proxy_id}_errors_bitmask_alarm).state))
+                alarms = (uint16_t)id(${proxy_id}_errors_bitmask_alarm).state;
+              p[162] = alarms & 0xFF;
+              p[163] = (alarms >> 8) & 0xFF;
+              p[164] = 0;
+
+              // Balance status (payload offset 168): 0=off, 1=charge, 2=discharge
+              p[168] = id(${proxy_id}_equalizing).state ? 1 : 0;
+
+              // SOC (payload offset 169): u8, 0-100%
+              p[169] = (uint8_t)soc_val;
+
+              // Capacity remaining (payload offset 170): u32 LE, mAh
+              uint32_t cap_r_mah = (uint32_t)(cap_remain * 1000);
+              p[170] = cap_r_mah & 0xFF;
+              p[171] = (cap_r_mah >> 8) & 0xFF;
+              p[172] = (cap_r_mah >> 16) & 0xFF;
+              p[173] = (cap_r_mah >> 24) & 0xFF;
+
+              // Nominal capacity (payload offset 174): u32 LE, mAh
+              uint32_t cap_n_mah = (uint32_t)(cap_total * 1000);
+              p[174] = cap_n_mah & 0xFF;
+              p[175] = (cap_n_mah >> 8) & 0xFF;
+              p[176] = (cap_n_mah >> 16) & 0xFF;
+              p[177] = (cap_n_mah >> 24) & 0xFF;
+
+              // Cycle count (payload offset 178): u32 LE
+              uint32_t cycles = (uint32_t)cyc_val;
+              p[178] = cycles & 0xFF;
+              p[179] = (cycles >> 8) & 0xFF;
+              p[180] = (cycles >> 16) & 0xFF;
+              p[181] = (cycles >> 24) & 0xFF;
+
+              // SOH (payload offset 186): u16 LE, % × 256
+              uint16_t soh_enc = (uint16_t)(soh_val * 256);
+              p[186] = soh_enc & 0xFF; p[187] = (soh_enc >> 8) & 0xFF;
+
+              // Charge MOSFET (payload offset 194): u8
+              p[194] = id(${proxy_id}_charge_enabled).state ? 1 : 0;
+              // Discharge MOSFET (payload offset 195): u8
+              p[195] = id(${proxy_id}_discharge_enabled).state ? 1 : 0;
+
+              // Send frame
+              id(${charger_uart_id}).write_array(frame, sizeof(frame));
+              ESP_LOGI("proxy_jk", "Sent JK Type02: V=%.1fV I=%.1fA SOC=%u%% SOH=%.0f%%",
+                voltage, current, (unsigned)p[169], soh_val);
+              return;
+            }
+
+            // ========== Pylontech Protocol ==========
+            if (proto != 1) return;
             if (bytes.size() < 18) return;
             if (bytes[0] != 0x7E) return;
 
