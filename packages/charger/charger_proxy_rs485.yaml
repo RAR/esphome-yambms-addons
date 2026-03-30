@@ -15,6 +15,8 @@
 #             charger_tx_pin: '17'
 #             charger_rx_pin: '18'
 #             charger_flow_control_pin: '21'
+#             charger_baud_rate: '9600'          # optional, default 9600
+#             charger_charge_control: 'true'     # optional, default true
 #
 # Required vars:
 #   charger_id:               Unique ID (e.g., 'charger_a')
@@ -24,11 +26,20 @@
 #   charger_rx_pin:           UART RX GPIO pin
 #   charger_flow_control_pin: DE/RE direction control GPIO pin
 #
+# Optional vars:
+#   charger_baud_rate:        UART baud rate (default: '9600')
+#   charger_charge_control:   Enable charge control entities and spoofing (default: 'true')
+#                             Set to 'false' for monitoring-only (e.g., Solar Assistant)
+#
 # Also requires ${proxy_id} from top-level substitutions
 # (references shared BLE client sensors).
 #
 # Full Pylontech RS485 protocol emulator (0x60-0x63).
 # Responds to charger queries as if it were a Pylontech battery.
+
+substitutions:
+  charger_baud_rate: '9600'
+  charger_charge_control: 'true'
 
 globals:
   - id: ${charger_id}_rs485_last_request
@@ -146,7 +157,7 @@ uart:
   - id: ${charger_uart_id}
     tx_pin: ${charger_tx_pin}
     rx_pin: ${charger_rx_pin}
-    baud_rate: 9600
+    baud_rate: ${charger_baud_rate}
     rx_buffer_size: 256
     flow_control_pin: ${charger_flow_control_pin}
     debug:
