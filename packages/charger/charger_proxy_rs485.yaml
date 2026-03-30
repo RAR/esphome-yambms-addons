@@ -323,6 +323,11 @@ uart:
               // Discharge MOSFET (payload offset 195): u8
               p[195] = id(${proxy_id}_discharge_enabled).state ? 1 : 0;
 
+              // Checksum: sum of bytes 0-298, stored at byte 299
+              uint8_t cksum = 0;
+              for (int i = 0; i < 299; i++) cksum += frame[i];
+              frame[299] = cksum;
+
               // Send frame
               id(${charger_uart_id}).write_array(frame, sizeof(frame));
               ESP_LOGI("proxy_jk", "Sent JK Type02: V=%.1fV I=%.1fA SOC=%u%% SOH=%.0f%%",
