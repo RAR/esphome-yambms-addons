@@ -47,6 +47,7 @@ globals:
     restore_value: no
     initial_value: "0"
 
+<% if charger_charge_control == 'true' %>
 switch:
   - platform: template
     name: "${charger_name} Charge Enable"
@@ -55,6 +56,14 @@ switch:
     optimistic: true
     restore_mode: RESTORE_DEFAULT_ON
     entity_category: config
+<% else %>
+switch:
+  - platform: template
+    id: ${charger_id}_charge_enable
+    internal: true
+    optimistic: true
+    restore_mode: ALWAYS_ON
+<% endif %>
 
 select:
   - platform: template
@@ -81,6 +90,7 @@ sensor:
     unit_of_measurement: "s"
     accuracy_decimals: 0
     entity_category: diagnostic
+<% if charger_charge_control == 'true' %>
   - platform: template
     id: ${charger_id}_sent_cvl
     name: "${charger_name} Sent CVL"
@@ -93,14 +103,30 @@ sensor:
     unit_of_measurement: "A"
     accuracy_decimals: 1
     icon: "mdi:current-dc"
+<% else %>
+  - platform: template
+    id: ${charger_id}_sent_cvl
+    internal: true
+  - platform: template
+    id: ${charger_id}_sent_ccl
+    internal: true
+<% endif %>
 
+<% if charger_charge_control == 'true' %>
 text_sensor:
   - platform: template
     id: ${charger_id}_charge_mode
     name: "${charger_name} Charge Mode"
     icon: "mdi:information-outline"
     entity_category: diagnostic
+<% else %>
+text_sensor:
+  - platform: template
+    id: ${charger_id}_charge_mode
+    internal: true
+<% endif %>
 
+<% if charger_charge_control == 'true' %>
 number:
   - platform: template
     name: "${charger_name} CVL Override"
@@ -128,6 +154,25 @@ number:
     optimistic: true
     entity_category: config
     mode: box
+<% else %>
+number:
+  - platform: template
+    id: ${charger_id}_cvl_override
+    internal: true
+    min_value: 0
+    max_value: 58
+    step: 0.1
+    initial_value: 0
+    optimistic: true
+  - platform: template
+    id: ${charger_id}_ccl_override
+    internal: true
+    min_value: 0
+    max_value: 300
+    step: 1
+    initial_value: 0
+    optimistic: true
+<% endif %>
 
 interval:
   - interval: 1s
