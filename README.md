@@ -30,6 +30,14 @@ Proxies inverter CAN bus or RS485 communication over BLE, allowing the inverter-
 | `packages/yambms/yambms_ble_server.yaml` | YamBMS BLE server integration |
 | `packages/shunt/shunt_combine_Victron_SmartShunt_BLE_connect.yaml` | Victron SmartShunt BLE direct connect |
 
+### MQTT Inverter Proxy
+
+The same proxy without BLE: YamBMS's MQTT state topics fill the sensors the BLE client would, so the inverter and charger output packages work unchanged and the proxy only needs to reach the broker. Its "YamBMS Link" sensor (the BLE client's `ble_connected` id) is on only while MQTT is connected and voltage, CVL and CCL arrived within 60 s; when it drops, the outputs stop sending.
+
+| Package | Description |
+|---------|-------------|
+| `packages/inverter/inverter_proxy_mqtt_client.yaml` | MQTT client for inverter/charger proxies (drop-in for the BLE client) |
+
 ### Charger Proxy
 
 Controls chargers that speak the Pylontech RS485 battery protocol by spoofing battery responses. The proxy receives real battery data from YamBMS over BLE and responds to charger RS485 queries (0x60–0x63) as if it were a Pylontech battery. Supports multiple chargers on separate UARTs with independent charge control. Also supports monitoring-only mode (e.g., Solar Assistant) with configurable baud rate and no charge spoofing.
@@ -48,6 +56,8 @@ See [CHARGER_PROXY_README.md](CHARGER_PROXY_README.md) for full documentation, h
 | `YamBMS_BLE_Proxy_CAN_Example.yaml` | BLE inverter proxy with CAN bus |
 | `YamBMS_BLE_Proxy_RS485_Example.yaml` | BLE inverter proxy with RS485 |
 | `YamBMS_Charger_Proxy_Example.yaml` | BLE charger proxy with RS485 (Ecoworthy EC100) |
+| `YamBMS_Charger_Proxy_CAN_Example.yaml` | BLE charger proxy with LuxPower CAN |
+| `YamBMS_MQTT_Charger_Proxy_CAN_Example.yaml` | MQTT charger proxy with LuxPower CAN (e.g. EG4 12000XP) |
 
 ## Usage
 

@@ -1,0 +1,304 @@
+# Updated : 2026.10.19
+# Version : 1.0.0
+# GitHub  : https://github.com/RAR/esphome-yambms-addons
+
+# YamBMS ( Yet another multi-BMS Merging Solution )
+
+# This YAML is free software: you can redistribute it and/or
+# modify it under the terms of the GNU General Public License
+# as published by the Free Software Foundation, either version 3
+# of the License, or (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.
+# See the GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program. If not, see <http://www.gnu.org/licenses/gpl.html>.
+
+# +--------------------------------------+
+# | Inverter Proxy MQTT Client           |
+# +--------------------------------------+
+# Drop-in replacement for inverter_proxy_ble_client.yaml: the same
+# ${proxy_id}_* ids, filled from YamBMS's MQTT state topics instead of
+# its BLE server, so the inverter and charger output packages
+# (inverter_proxy_canbus/rs485, charger_proxy_canbus/rs485) work
+# unchanged. No BLE server is needed on the YamBMS node, only its
+# mqtt: block.
+#
+# ${proxy_id}_ble_connected keeps its id (the output packages gate on
+# it) but means "YamBMS data is fresh": MQTT connected, and pack
+# voltage, CVL and CCL all arrived within the last 60 s (YamBMS
+# publishes them every 10-15 s). When it drops, the output packages
+# stop sending, as they do on a BLE disconnect.
+#
+# Charge Enabled follows the BLE server's status flag: on while
+# YamBMS's charging instruction is Bulk or Float.
+#
+# Variables required:
+# ${proxy_id}      - ID prefix for this proxy (e.g. 'ew_proxy')
+# ${yambms_prefix} - the part of YamBMS's topics before /sensor/...
+#                    e.g. 'yambms/yambms_1' for
+#                    yambms/yambms_1/sensor/battery_soc/state
+#                    (check with: mosquitto_sub -v -t '#')
+#
+# The device config needs an mqtt: block with id: mqtt_client.
+
+globals:
+  - id: ${proxy_id}_voltage_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: ${proxy_id}_cvl_ms
+    type: uint32_t
+    initial_value: "0"
+  - id: ${proxy_id}_ccl_ms
+    type: uint32_t
+    initial_value: "0"
+
+binary_sensor:
+  - platform: template
+    name: "YamBMS Link"
+    id: ${proxy_id}_ble_connected
+    device_class: connectivity
+
+  # As the BLE server's status flags: charge enabled while YamBMS's charging
+  # instruction is Bulk or Float.
+  - platform: template
+    name: "Charge Enabled"
+    id: ${proxy_id}_charge_enabled
+    lambda: |-
+      const std::string &ci = id(${proxy_id}_charging_instruction).state;
+      return ci == "Bulk" || ci == "Float";
+
+  - platform: template
+    name: "Discharge Enabled"
+    id: ${proxy_id}_discharge_enabled
+    lambda: return id(${proxy_id}_discharging_instruction_raw).state == "ON";
+
+  - platform: template
+    name: "Equalizing"
+    id: ${proxy_id}_equalizing
+    lambda: return id(${proxy_id}_equalizing_raw).state == "ON";
+
+  - platform: template
+    name: "Force Charge"
+    id: ${proxy_id}_force_charge
+    lambda: return id(${proxy_id}_force_charge_raw).state == "ON";
+
+# YamBMS publishes binary sensors only on change, retained: the broker hands the
+# last value over on subscribe.
+text_sensor:
+  - platform: mqtt_subscribe
+    id: ${proxy_id}_charging_instruction
+    name: "Charging Instruction"
+    topic: ${yambms_prefix}/sensor/charging_instruction/state
+  - platform: mqtt_subscribe
+    id: ${proxy_id}_discharging_instruction_raw
+    internal: true
+    topic: ${yambms_prefix}/binary_sensor/discharging_instruction/state
+  - platform: mqtt_subscribe
+    id: ${proxy_id}_equalizing_raw
+    internal: true
+    topic: ${yambms_prefix}/binary_sensor/equalizing_state/state
+  - platform: mqtt_subscribe
+    id: ${proxy_id}_force_charge_raw
+    internal: true
+    topic: ${yambms_prefix}/binary_sensor/requested_force_charge/state
+
+sensor:
+  # Battery
+  - platform: mqtt_subscribe
+    name: "Voltage"
+    id: ${proxy_id}_voltage
+    topic: ${yambms_prefix}/sensor/total_voltage/state
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    device_class: voltage
+    state_class: measurement
+    on_value:
+      - lambda: id(${proxy_id}_voltage_ms) = millis();
+
+  - platform: mqtt_subscribe
+    name: "Current"
+    id: ${proxy_id}_current
+    topic: ${yambms_prefix}/sensor/current/state
+    unit_of_measurement: "A"
+    accuracy_decimals: 2
+    device_class: current
+    state_class: measurement
+
+  - platform: mqtt_subscribe
+    name: "Power"
+    id: ${proxy_id}_power
+    topic: ${yambms_prefix}/sensor/power/state
+    unit_of_measurement: "W"
+    accuracy_decimals: 1
+    device_class: power
+    state_class: measurement
+
+  - platform: mqtt_subscribe
+    name: "SOC"
+    id: ${proxy_id}_soc
+    topic: ${yambms_prefix}/sensor/battery_soc/state
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    device_class: battery
+    state_class: measurement
+
+  - platform: mqtt_subscribe
+    name: "SOH"
+    id: ${proxy_id}_soh
+    topic: ${yambms_prefix}/sensor/battery_soh/state
+    unit_of_measurement: "%"
+    accuracy_decimals: 0
+    state_class: measurement
+
+  - platform: mqtt_subscribe
+    name: "Capacity"
+    id: ${proxy_id}_capacity
+    topic: ${yambms_prefix}/sensor/battery_capacity/state
+    unit_of_measurement: "Ah"
+    accuracy_decimals: 0
+    state_class: measurement
+
+  - platform: mqtt_subscribe
+    name: "Capacity Remaining"
+    id: ${proxy_id}_capacity_remaining
+    topic: ${yambms_prefix}/sensor/capacity_remaining/state
+    unit_of_measurement: "Ah"
+    accuracy_decimals: 0
+    state_class: measurement
+
+  - platform: mqtt_subscribe
+    name: "Charging Cycles"
+    id: ${proxy_id}_charging_cycles
+    topic: ${yambms_prefix}/sensor/charging_cycles/state
+    accuracy_decimals: 0
+    state_class: total_increasing
+
+  # Limits
+  - platform: mqtt_subscribe
+    name: "Charge Voltage CVL"
+    id: ${proxy_id}_charge_voltage
+    topic: ${yambms_prefix}/sensor/requested_charge_voltage/state
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    device_class: voltage
+    state_class: measurement
+    on_value:
+      - lambda: id(${proxy_id}_cvl_ms) = millis();
+
+  - platform: mqtt_subscribe
+    name: "Charge Current CCL"
+    id: ${proxy_id}_charge_current
+    topic: ${yambms_prefix}/sensor/requested_charge_current/state
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+    on_value:
+      - lambda: id(${proxy_id}_ccl_ms) = millis();
+
+  - platform: mqtt_subscribe
+    name: "Discharge Voltage DVL"
+    id: ${proxy_id}_discharge_voltage
+    topic: ${yambms_prefix}/sensor/requested_discharge_voltage/state
+    unit_of_measurement: "V"
+    accuracy_decimals: 2
+    device_class: voltage
+    state_class: measurement
+
+  - platform: mqtt_subscribe
+    name: "Discharge Current DCL"
+    id: ${proxy_id}_discharge_current
+    topic: ${yambms_prefix}/sensor/requested_discharge_current/state
+    unit_of_measurement: "A"
+    accuracy_decimals: 1
+    device_class: current
+    state_class: measurement
+
+  # Cells and temperatures
+  - platform: mqtt_subscribe
+    name: "Cell Count"
+    id: ${proxy_id}_cell_count
+    topic: ${yambms_prefix}/sensor/cell_count/state
+    accuracy_decimals: 0
+    state_class: measurement
+
+  - platform: mqtt_subscribe
+    name: "Min Cell Voltage"
+    id: ${proxy_id}_min_cell_voltage
+    topic: ${yambms_prefix}/sensor/min_cell_voltage/state
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    device_class: voltage
+    state_class: measurement
+
+  - platform: mqtt_subscribe
+    name: "Max Cell Voltage"
+    id: ${proxy_id}_max_cell_voltage
+    topic: ${yambms_prefix}/sensor/max_cell_voltage/state
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    device_class: voltage
+    state_class: measurement
+
+  - platform: mqtt_subscribe
+    name: "Cell Delta"
+    id: ${proxy_id}_delta_cell_voltage
+    topic: ${yambms_prefix}/sensor/delta_cell_voltage/state
+    unit_of_measurement: "V"
+    accuracy_decimals: 3
+    device_class: voltage
+    state_class: measurement
+
+  - platform: mqtt_subscribe
+    name: "Min Temperature"
+    id: ${proxy_id}_min_temperature
+    topic: ${yambms_prefix}/sensor/min_temperature/state
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+
+  - platform: mqtt_subscribe
+    name: "Max Temperature"
+    id: ${proxy_id}_max_temperature
+    topic: ${yambms_prefix}/sensor/max_temperature/state
+    unit_of_measurement: "°C"
+    accuracy_decimals: 1
+    device_class: temperature
+    state_class: measurement
+
+  # Status
+  - platform: mqtt_subscribe
+    name: "Errors Alarm"
+    id: ${proxy_id}_errors_bitmask_alarm
+    topic: ${yambms_prefix}/sensor/errors_bitmask_alarm/state
+    accuracy_decimals: 0
+
+  - platform: mqtt_subscribe
+    name: "Errors Warning"
+    id: ${proxy_id}_errors_bitmask_warning
+    topic: ${yambms_prefix}/sensor/errors_bitmask_warning/state
+    accuracy_decimals: 0
+
+  - platform: mqtt_subscribe
+    name: "BMS Combined"
+    id: ${proxy_id}_bms_combined
+    topic: ${yambms_prefix}/sensor/bms_combined/state
+    accuracy_decimals: 0
+
+interval:
+  - interval: 1s
+    then:
+      - lambda: |-
+          const uint32_t now = millis();
+          auto recent = [&](uint32_t t) { return t != 0 && now - t < 60000; };
+          const bool fresh = id(mqtt_client).is_connected() && recent(id(${proxy_id}_voltage_ms)) &&
+                             recent(id(${proxy_id}_cvl_ms)) && recent(id(${proxy_id}_ccl_ms));
+          if (!id(${proxy_id}_ble_connected).has_state() || id(${proxy_id}_ble_connected).state != fresh) {
+            if (!fresh) ESP_LOGW("yambms_mqtt", "YamBMS data stale or MQTT down");
+            id(${proxy_id}_ble_connected).publish_state(fresh);
+          }
